@@ -5,10 +5,25 @@ edition = "2021"
 license = "MIT"
 description = "Stable named URLs for local dev servers behind a TLS-terminating reverse proxy"
 
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-hyper = { version = "1", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "signal",
+    "sync",
+    "process",
+    "time",
+] }
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
