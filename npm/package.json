@@ -1,0 +1,39 @@
+{
+  "name": "portproxy",
+  "version": "0.1.0",
+  "description": "Stable named URLs for local dev servers behind a TLS-terminating reverse proxy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zzjin/portproxy.git"
+  },
+  "homepage": "https://github.com/zzjin/portproxy",
+  "keywords": [
+    "portproxy",
+    "portless",
+    "proxy",
+    "reverse-proxy",
+    "localhost",
+    "dev",
+    "port",
+    "caddy",
+    "nginx"
+  ],
+  "bin": {
+    "portproxy": "bin/portproxy"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ]
+}

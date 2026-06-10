@@ -33,6 +33,15 @@ upstream proxy are preserved.
 
 ## Install
 
+Via npm (downloads the prebuilt binary for your platform from GitHub Releases
+on postinstall; Linux x64/arm64 and macOS x64/arm64):
+
+```sh
+npm install -g portproxy
+```
+
+Or build from source:
+
 ```sh
 cargo build --release          # target/release/portproxy, single binary
 ```
