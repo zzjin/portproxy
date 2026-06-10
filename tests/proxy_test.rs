@@ -158,11 +158,20 @@ async fn unknown_label_404_lists_routes() {
         Duration::from_secs(60),
     )
     .await;
-    let (status, headers, body) = request(p.addr, "nope.dev.example.test", &[]).await;
+    let (status, headers, body) = request(
+        p.addr,
+        "nope.dev.example.test",
+        &[("x-forwarded-proto", "https")],
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(headers.get("x-portproxy").unwrap(), "1");
     assert!(body.contains("nope"));
-    assert!(body.contains("app"));
+    // clickable link: first label swapped, upstream domain + scheme preserved
+    assert!(
+        body.contains("href=\"https://app.dev.example.test\""),
+        "{body}"
+    );
     p.handle.abort();
 }
 

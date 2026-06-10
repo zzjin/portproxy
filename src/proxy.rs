@@ -132,9 +132,15 @@ async fn handle(
     };
     let route = routes.read().await.get(&label).cloned();
     let Some(route) = route else {
-        let mut names: Vec<String> = routes.read().await.keys().cloned().collect();
-        names.sort();
-        return Ok(stamp(not_found(&label, &names)));
+        let mut active: Vec<Route> = routes.read().await.values().cloned().collect();
+        active.sort_by(|a, b| a.hostname.cmp(&b.hostname));
+        let scheme = req
+            .headers()
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("http")
+            .to_string();
+        return Ok(stamp(not_found(&label, &host, &scheme, &active)));
     };
 
     let is_upgrade = req
@@ -292,24 +298,104 @@ fn text(status: StatusCode, msg: &str) -> Response<Body> {
         .unwrap()
 }
 
-fn not_found(label: &str, names: &[String]) -> Response<Body> {
-    let list: String = if names.is_empty() {
-        "<li><em>none</em></li>".to_string()
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// URL for a route, derived from the requested host: swap its first label.
+/// `nope.dev.example.test` + route `app` -> `<scheme>://app.dev.example.test`.
+/// Works with any upstream domain — no configuration needed.
+fn sibling_url(scheme: &str, requested_host: &str, label: &str) -> String {
+    let host_no_port = requested_host.split(':').next().unwrap_or(requested_host);
+    match host_no_port.split_once('.') {
+        Some((_, rest)) => format!("{scheme}://{label}.{rest}"),
+        None => format!("{scheme}://{label}"),
+    }
+}
+
+fn not_found(label: &str, host: &str, scheme: &str, active: &[Route]) -> Response<Body> {
+    let label = html_escape(label);
+    let list: String = if active.is_empty() {
+        "<p class=empty><em>No apps running.</em></p>".to_string()
     } else {
-        names
+        let items: String = active
             .iter()
-            .map(|n| format!("<li><code>{n}</code></li>"))
-            .collect()
+            .map(|r| {
+                let name = html_escape(&r.hostname);
+                let url = html_escape(&sibling_url(scheme, host, &r.hostname));
+                format!(
+                    "<li><a href=\"{url}\">{name}</a> <span class=port>127.0.0.1:{}</span></li>",
+                    r.port
+                )
+            })
+            .collect();
+        format!("<ul>{items}</ul>")
     };
     let html = format!(
-        "<!doctype html><meta charset=utf-8><title>portproxy: not found</title>\
-         <body style=\"font-family:system-ui;max-width:40rem;margin:4rem auto\">\
-         <h1>No app named <code>{label}</code></h1>\
-         <p>Active routes:</p><ul>{list}</ul></body>"
+        r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>portproxy &mdash; not found</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto;
+         padding: 0 1rem; line-height: 1.6; color: #1a1a1a; background: #fff; }}
+  h1 {{ font-size: 1.4rem; }}
+  code {{ background: rgba(127,127,127,.15); padding: .15em .4em; border-radius: 4px; }}
+  ul {{ padding-left: 1.2rem; }}
+  li {{ margin: .3rem 0; }}
+  a {{ color: #0070f3; text-decoration: none; }}
+  a:hover {{ text-decoration: underline; }}
+  .port {{ color: #888; font-size: .85em; margin-left: .5em; }}
+  .hint {{ color: #666; margin-top: 2rem; font-size: .9em; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ color: #ededed; background: #111; }}
+    a {{ color: #52a8ff; }}
+  }}
+</style>
+</head>
+<body>
+<h1>No app named <code>{label}</code></h1>
+<p>Active apps:</p>
+{list}
+<p class=hint>Start one with: <code>portproxy {label} your-command</code>
+or <code>portproxy run your-command</code></p>
+</body>
+</html>"#
     );
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("content-type", "text/html; charset=utf-8")
         .body(Full::new(Bytes::from(html)).map_err(|e| match e {}).boxed())
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sibling_url_swaps_first_label() {
+        assert_eq!(
+            sibling_url("https", "nope.dev.example.test", "app"),
+            "https://app.dev.example.test"
+        );
+        assert_eq!(
+            sibling_url("http", "nope.localhost:1355", "app"),
+            "http://app.localhost"
+        );
+        assert_eq!(sibling_url("http", "bare", "app"), "http://app");
+    }
+
+    #[test]
+    fn html_escape_neutralizes_markup() {
+        assert_eq!(
+            html_escape(r#"<img src=x onerror="x">&"#),
+            "&lt;img src=x onerror=&quot;x&quot;&gt;&amp;"
+        );
+    }
 }
