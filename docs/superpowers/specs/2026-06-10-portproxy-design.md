@@ -57,16 +57,17 @@ Stack: `tokio`, `hyper` 1.x + `hyper-util`, `http-body-util`, `clap` (derive),
   `scheme = "https"` (default; base_domain/scheme used only by `get`/`list` to print
   full URLs — the proxy itself never needs them).
 
-## Name auto-discovery (priority high → low)
+## Name auto-discovery (priority high → low; same files/order as Vercel portless)
 
 1. `--name` flag
-2. `portproxy.toml` in cwd (`name` key)
-3. `package.json` `"portproxy"` key (string shorthand or `{name}`)
+2. `portproxy.json` in cwd (`{"name": ...}`; cwd only, no walk-up)
+3. `package.json` `"portproxy"` key in cwd (string shorthand or `{name}`; cwd only)
 4. `package.json` `"name"` — walk up dirs, strip `@scope/`
-5. `Cargo.toml` `[package] name` — walk up dirs
-6. Git repo root basename (`git rev-parse --show-toplevel`; for linked worktrees use
-   main repo root via `--git-common-dir` so dir suffixes don't pollute the name)
-7. cwd basename
+5. Git repo root basename (`git rev-parse --show-toplevel`; filesystem fallback:
+   walk up looking for `.git`)
+6. cwd basename
+
+A source whose value sanitizes to an empty label falls through to the next one.
 
 Sanitize to DNS label: lowercase, non-`[a-z0-9-]` → `-`, collapse/trim hyphens,
 63-char cap with 6-hex sha256 suffix on truncation.

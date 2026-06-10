@@ -37,7 +37,8 @@ impl GlobalConfig {
     }
 }
 
-/// Per-project config: `portproxy.toml` in the working directory.
+/// Per-project config: `portproxy.json` in the working directory (cwd only,
+/// no walk-up — mirrors Vercel portless's portless.json).
 #[derive(Debug, Deserialize, Default)]
 pub struct ProjectConfig {
     pub name: Option<String>,
@@ -45,8 +46,8 @@ pub struct ProjectConfig {
 
 impl ProjectConfig {
     pub fn load(dir: &Path) -> Option<Self> {
-        let s = std::fs::read_to_string(dir.join("portproxy.toml")).ok()?;
-        toml::from_str(&s).ok()
+        let s = std::fs::read_to_string(dir.join("portproxy.json")).ok()?;
+        serde_json::from_str(&s).ok()
     }
 }
 

@@ -67,18 +67,20 @@ PORTPROXY=0 pnpm dev               # bypass portproxy entirely
 
 ## Name inference
 
-Highest priority first:
+Highest priority first (same files and read order as Vercel portless):
 
 1. `--name` flag
-2. `portproxy.toml` in cwd: `name = "..."`
-3. nearest `package.json` walking up: `"portproxy"` key (string or `{ "name": ... }`)
-4. nearest `package.json` `"name"` (with `@scope/` stripped)
-5. nearest `Cargo.toml` `[package] name`
-6. git main-repository root directory name
-7. current directory name
+2. `portproxy.json` in cwd: `{ "name": "..." }` (cwd only, no walk-up)
+3. `package.json` `"portproxy"` key in cwd (string shorthand or `{ "name": ... }`,
+   cwd only)
+4. nearest `package.json` `"name"` walking up directories (`@scope/` stripped)
+5. git repository root directory name (`git rev-parse --show-toplevel`; walks
+   up looking for `.git` when the git CLI is unavailable)
+6. current directory name
 
 Names are sanitized to a DNS label (lowercase, `[a-z0-9-]`, max 63 chars with
-a hash suffix on truncation).
+a hash suffix on truncation); a source that sanitizes to empty falls through
+to the next one.
 
 ## Git worktrees
 
