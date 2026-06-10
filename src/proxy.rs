@@ -16,17 +16,15 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 pub struct ProxyOptions {
-    pub listen: SocketAddr,
     /// Startup window during which idle shutdown is suppressed.
     pub grace: Duration,
     /// Continuous zero-route time after which the proxy exits.
     pub idle_delay: Duration,
 }
 
-impl ProxyOptions {
-    pub fn new(listen: SocketAddr) -> Self {
+impl Default for ProxyOptions {
+    fn default() -> Self {
         Self {
-            listen,
             grace: Duration::from_secs(10),
             idle_delay: Duration::from_secs(5),
         }
@@ -39,8 +37,10 @@ type HttpClient = Client<HttpConnector, Incoming>;
 
 /// Run the proxy until it goes idle (no routes for `idle_delay` after `grace`).
 /// routes.json is the IPC: reloaded every 100 ms, dead-PID entries dropped.
-pub async fn run_proxy(store: RouteStore, opts: ProxyOptions) -> Result<()> {
-    let listener = TcpListener::bind(opts.listen).await?;
+/// Takes a pre-bound listener so callers only persist state (pid files) after
+/// the bind has succeeded — a second racing proxy must fail before writing
+/// anything it would clean up on exit.
+pub async fn run_proxy(store: RouteStore, listener: TcpListener, opts: ProxyOptions) -> Result<()> {
     let routes: RouteMap = Default::default();
     let (tx, rx) = watch::channel(false);
 

@@ -59,18 +59,15 @@ async fn spawn_proxy(routes: Vec<Route>, grace: Duration, idle: Duration) -> Tes
         serde_json::to_string(&routes).unwrap(),
     )
     .unwrap();
-    // pick a free port by binding then dropping
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = probe.local_addr().unwrap();
-    drop(probe);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
     let store = RouteStore::new(dir.path().to_path_buf());
     let opts = ProxyOptions {
-        listen: addr,
         grace,
         idle_delay: idle,
     };
     let handle = tokio::spawn(async move {
-        run_proxy(store, opts).await.unwrap();
+        run_proxy(store, listener, opts).await.unwrap();
     });
     // wait until accepting
     for _ in 0..50 {

@@ -307,6 +307,12 @@ async fn cmd_proxy(args: &[String]) -> Result<i32> {
                 let addr: std::net::SocketAddr = listen
                     .parse()
                     .with_context(|| format!("invalid listen address {listen:?}"))?;
+                // bind BEFORE writing pid files: a second racing proxy must
+                // die here without ever touching (and later deleting) the
+                // healthy proxy's state files
+                let listener = tokio::net::TcpListener::bind(addr)
+                    .await
+                    .with_context(|| format!("failed to bind {addr}"))?;
                 std::fs::create_dir_all(&state)?;
                 std::fs::write(state.join("proxy.pid"), std::process::id().to_string())?;
                 std::fs::write(state.join("proxy.port"), addr.port().to_string())?;
@@ -318,7 +324,7 @@ async fn cmd_proxy(args: &[String]) -> Result<i32> {
                     let mut sigterm = signal(SignalKind::terminate())?;
                     let mut sigint = signal(SignalKind::interrupt())?;
                     tokio::select! {
-                        r = proxy::run_proxy(store, proxy::ProxyOptions::new(addr)) => r,
+                        r = proxy::run_proxy(store, listener, proxy::ProxyOptions::default()) => r,
                         _ = sigterm.recv() => Ok(()),
                         _ = sigint.recv() => Ok(()),
                     }
