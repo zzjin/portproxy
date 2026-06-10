@@ -80,7 +80,14 @@ mod tests {
         let out = inject_framework_flags(&v(&["vite"]), 4123);
         assert_eq!(
             out,
-            v(&["vite", "--port", "4123", "--strictPort", "--host", "127.0.0.1"])
+            v(&[
+                "vite",
+                "--port",
+                "4123",
+                "--strictPort",
+                "--host",
+                "127.0.0.1"
+            ])
         );
     }
 
@@ -89,7 +96,15 @@ mod tests {
         let out = inject_framework_flags(&v(&["npx", "astro", "dev"]), 4001);
         assert_eq!(
             out,
-            v(&["npx", "astro", "dev", "--port", "4001", "--host", "127.0.0.1"])
+            v(&[
+                "npx",
+                "astro",
+                "dev",
+                "--port",
+                "4001",
+                "--host",
+                "127.0.0.1"
+            ])
         );
     }
 
@@ -98,7 +113,16 @@ mod tests {
         let out = inject_framework_flags(&v(&["pnpm", "dlx", "vite"]), 4002);
         assert_eq!(
             out,
-            v(&["pnpm", "dlx", "vite", "--port", "4002", "--strictPort", "--host", "127.0.0.1"])
+            v(&[
+                "pnpm",
+                "dlx",
+                "vite",
+                "--port",
+                "4002",
+                "--strictPort",
+                "--host",
+                "127.0.0.1"
+            ])
         );
     }
 

@@ -33,9 +33,7 @@ async fn spawn_backend() -> SocketAddr {
                         "hops": req.headers().get("x-portproxy-hops")
                             .and_then(|v| v.to_str().ok()).unwrap_or(""),
                     });
-                    Ok::<_, hyper::Error>(Response::new(Full::new(Bytes::from(
-                        info.to_string(),
-                    ))))
+                    Ok::<_, hyper::Error>(Response::new(Full::new(Bytes::from(info.to_string()))))
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), svc)

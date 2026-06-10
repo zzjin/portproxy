@@ -50,10 +50,7 @@ pub async fn run_proxy(store: RouteStore, listener: TcpListener, opts: ProxyOpti
             loop {
                 let live = store.load();
                 let _ = tx.send(!live.is_empty());
-                *routes.write().await = live
-                    .into_iter()
-                    .map(|r| (r.hostname.clone(), r))
-                    .collect();
+                *routes.write().await = live.into_iter().map(|r| (r.hostname.clone(), r)).collect();
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -144,7 +141,7 @@ async fn handle(
         .headers()
         .get(hyper::header::CONNECTION)
         .and_then(|v| v.to_str().ok())
-        .map_or(false, |v| v.to_lowercase().contains("upgrade"))
+        .is_some_and(|v| v.to_lowercase().contains("upgrade"))
         && req.headers().contains_key(hyper::header::UPGRADE);
     if is_upgrade {
         return Ok(stamp(websocket_tunnel(req, route.port, &host).await));

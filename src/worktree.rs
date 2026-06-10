@@ -3,7 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn git_out(cwd: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").args(args).current_dir(cwd).output().ok()?;
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -29,7 +33,10 @@ fn via_git_cli(cwd: &Path) -> Option<Option<String>> {
         return Some(None);
     }
     let git_dir = git_out(cwd, &["rev-parse", "--path-format=absolute", "--git-dir"])?;
-    let common = git_out(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let common = git_out(
+        cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
     if git_dir == common {
         return Some(None); // main checkout: never suffixed
     }
@@ -115,7 +122,10 @@ mod tests {
     fn main_checkout_unsuffixed_even_with_worktrees() {
         let d = make_repo();
         let main = d.path().join("main");
-        git(&main, &["worktree", "add", "-q", "-b", "feature/auth", "../wt-auth"]);
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "feature/auth", "../wt-auth"],
+        );
         assert_eq!(worktree_suffix(&main), None);
     }
 
@@ -123,7 +133,10 @@ mod tests {
     fn linked_worktree_gets_branch_last_segment() {
         let d = make_repo();
         let main = d.path().join("main");
-        git(&main, &["worktree", "add", "-q", "-b", "feature/auth", "../wt-auth"]);
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "feature/auth", "../wt-auth"],
+        );
         assert_eq!(
             worktree_suffix(&d.path().join("wt-auth")).as_deref(),
             Some("auth")
@@ -142,7 +155,10 @@ mod tests {
     fn dotgit_file_fallback_parses_branch() {
         let d = make_repo();
         let main = d.path().join("main");
-        git(&main, &["worktree", "add", "-q", "-b", "feat/login-x", "../wt-login"]);
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "feat/login-x", "../wt-login"],
+        );
         assert_eq!(
             via_dotgit_file(&d.path().join("wt-login")).as_deref(),
             Some("login-x")

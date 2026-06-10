@@ -60,7 +60,7 @@ impl RouteStore {
                             .modified()
                             .ok()
                             .and_then(|m| m.elapsed().ok())
-                            .map_or(false, |e| e > Duration::from_secs(10))
+                            .is_some_and(|e| e > Duration::from_secs(10))
                         {
                             let _ = std::fs::remove_dir(&lock);
                             continue;

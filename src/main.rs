@@ -104,11 +104,7 @@ fn split_flags(args: &[String]) -> Result<(RunFlags, Vec<String>)> {
     while i < args.len() {
         match args[i].as_str() {
             "--name" => {
-                flags.name = Some(
-                    args.get(i + 1)
-                        .context("--name requires a value")?
-                        .clone(),
-                );
+                flags.name = Some(args.get(i + 1).context("--name requires a value")?.clone());
                 i += 2;
             }
             "--force" => {
@@ -135,7 +131,7 @@ fn split_flags(args: &[String]) -> Result<(RunFlags, Vec<String>)> {
 }
 
 async fn cmd_run(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
-    if std::env::var("PORTPROXY").map_or(false, |v| v == "0" || v == "skip") {
+    if std::env::var("PORTPROXY").is_ok_and(|v| v == "0" || v == "skip") {
         return exec_passthrough(&cmd).await;
     }
     let cwd = std::env::current_dir()?;
