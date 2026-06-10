@@ -9,6 +9,7 @@ use std::path::Path;
 /// 4. git repo root basename (`git rev-parse --show-toplevel`, filesystem
 ///    fallback: walk up looking for `.git`)
 /// 5. cwd basename
+///
 /// A source whose value sanitizes to empty falls through to the next one.
 pub fn infer_name(cwd: &Path) -> String {
     if let Some(pc) = ProjectConfig::load(cwd) {
