@@ -53,8 +53,9 @@ Stack: `tokio`, `hyper` 1.x + `hyper-util`, `http-body-util`, `clap` (derive),
 - `routes.lock` — lock directory (atomic `mkdir`), retries w/ backoff, stale after 10 s.
 - Dead-PID routes filtered on every load (`kill(pid, 0)`), persisted when under lock.
 - `proxy.pid`, `proxy.port`, `proxy.log`.
-- `config.toml` (optional): `listen = "127.0.0.1:1355"`, `base_domain = "dev.example.test"`
-  (used only by `get`/`list` to print full URLs; proxy never needs it).
+- `config.toml` (optional): `listen = "127.0.0.1:1355"`, `base_domain = "dev.example.test"`,
+  `scheme = "https"` (default; base_domain/scheme used only by `get`/`list` to print
+  full URLs — the proxy itself never needs them).
 
 ## Name auto-discovery (priority high → low)
 
@@ -103,9 +104,9 @@ Live-PID route with same hostname → error:
 ## CLI surface
 
 ```
-portproxy <cmd...>              # auto-inferred name
-portproxy run <cmd...>          # explicit run, auto name
-portproxy <name> <cmd...>       # explicit name
+portproxy run <cmd...>          # auto-inferred name (use --name to override)
+portproxy <name> <cmd...>       # explicit name (name must not be a reserved subcommand)
+# bare `portproxy <cmd...>` is NOT supported: ambiguous with the <name> form
 portproxy proxy start|stop [--foreground] [-l listen]
 portproxy list                  # active routes (+ URLs if base_domain set)
 portproxy get <name>            # print URL (requires base_domain)
