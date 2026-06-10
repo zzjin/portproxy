@@ -5,4 +5,5 @@ pub mod proxy;
 pub mod routes;
 pub mod types;
 pub mod utils;
+pub mod workspace;
 pub mod worktree;

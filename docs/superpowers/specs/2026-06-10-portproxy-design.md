@@ -69,6 +69,17 @@ Stack: `tokio`, `hyper` 1.x + `hyper-util`, `http-body-util`, `clap` (derive),
 
 A source whose value sanitizes to an empty label falls through to the next one.
 
+**Monorepo (added 2026-06-10, full Vercel parity minus turbo integration):**
+workspace discovery via pnpm-workspace.yaml / package.json `workspaces` (walk
+up); project name = root portproxy.json `name` → root package.json `portproxy`
+key → most common npm scope → plain inference on root; member packages are
+labeled `<project>-<pkgshort>` (bare project when equal); root `portproxy.json`
+`apps` map overrides per relative path; `portproxy run` (no command) at the
+workspace root starts every member's `dev` script with its own port/route,
+build-only scripts (tsc/tsup/esbuild/rollup/webpack/`* build`...) run without a
+route; inside a package it runs the `dev` script via the lockfile-detected
+package manager.
+
 Sanitize to DNS label: lowercase, non-`[a-z0-9-]` → `-`, collapse/trim hyphens,
 63-char cap with 6-hex sha256 suffix on truncation.
 

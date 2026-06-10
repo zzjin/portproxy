@@ -91,6 +91,28 @@ Names are sanitized to a DNS label (lowercase, `[a-z0-9-]`, max 63 chars with
 a hash suffix on truncation); a source that sanitizes to empty falls through
 to the next one.
 
+## Monorepos
+
+Workspace-aware, same behavior as Vercel portless (adapted to single-label
+names):
+
+- Workspace discovery via `pnpm-workspace.yaml` or package.json `workspaces`
+  (npm/yarn/bun), walking up from the current directory.
+- **Project name** = root `portproxy.json` `name` → root package.json
+  `portproxy` key → most common npm scope across packages (`@example/web` +
+  `@example/api` → `example`) → plain inference on the root.
+- Running inside a member package names it `<project>-<pkg>`
+  (`example-web`); a package whose short name equals the project name gets the
+  bare project name.
+- **`portproxy run` at the workspace root starts every package's `dev`
+  script**, each with its own port and route. Build-only dev scripts (tsc,
+  tsup, esbuild, rollup, webpack, `* build`, ...) run without a route.
+  Ctrl-C / SIGTERM stops the whole fleet and cleans every route.
+- Per-package overrides in root `portproxy.json`:
+  `{ "name": "example", "apps": { "packages/web": { "name": "frontend" } } }`
+- `portproxy run` inside a single package (no command) runs its `dev` script
+  via the detected package manager (pnpm/yarn/bun/npm by lockfile).
+
 ## Git worktrees
 
 Linked worktrees automatically get a branch suffix in the same label:

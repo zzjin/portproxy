@@ -38,9 +38,18 @@ impl GlobalConfig {
 }
 
 /// Per-project config: `portproxy.json` in the working directory (cwd only,
-/// no walk-up — mirrors Vercel portless's portless.json).
+/// no walk-up — mirrors Vercel portless's portless.json). At a workspace
+/// root, `apps` overrides member packages by root-relative path:
+/// `{ "name": "example", "apps": { "packages/web": { "name": "frontend" } } }`.
 #[derive(Debug, Deserialize, Default)]
 pub struct ProjectConfig {
+    pub name: Option<String>,
+    #[serde(default)]
+    pub apps: std::collections::HashMap<String, AppOverride>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AppOverride {
     pub name: Option<String>,
 }
 

@@ -1,8 +1,8 @@
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use portproxy::config::GlobalConfig;
+use portproxy::config::{GlobalConfig, ProjectConfig};
 use portproxy::routes::RouteStore;
-use portproxy::{naming, ports, proxy, utils, worktree};
+use portproxy::{naming, ports, proxy, utils, workspace, worktree};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -16,6 +16,9 @@ portproxy - stable named URLs for dev servers behind Caddy/Nginx
 USAGE:
   portproxy run <cmd...>             run with auto-inferred name
   portproxy <name> <cmd...>          run with explicit name
+  portproxy run                      in a package: run its `dev` script
+                                     at a workspace root: start ALL packages'
+                                     dev scripts (monorepo, names <project>-<pkg>)
   portproxy proxy start [--foreground] [-l ADDR]
   portproxy proxy stop
   portproxy list                     show active routes
@@ -67,7 +70,7 @@ async fn dispatch(args: Vec<String>) -> Result<i32> {
         }
         "run" => {
             let (flags, cmd) = split_flags(&args[1..])?;
-            cmd_run(flags, cmd).await
+            cmd_run_entry(flags, cmd).await
         }
         "proxy" => cmd_proxy(&args[1..]).await,
         "list" => cmd_list(),
@@ -76,15 +79,12 @@ async fn dispatch(args: Vec<String>) -> Result<i32> {
         "prune" => cmd_prune(args.iter().any(|a| a == "--force")),
         "clean" => cmd_clean(),
         name if !name.starts_with('-') => {
-            // explicit-name form: portproxy <name> <cmd...>
-            if args.len() < 2 {
-                bail!("missing command after name \"{name}\" (see `portproxy help`)");
-            }
+            // explicit-name form: portproxy <name> [cmd...]
             let (mut flags, cmd) = split_flags(&args[1..])?;
             if flags.name.is_none() {
                 flags.name = Some(name.to_string());
             }
-            cmd_run(flags, cmd).await
+            cmd_run_entry(flags, cmd).await
         }
         _ => bail!("unknown option {first} (see `portproxy help`)"),
     }
@@ -123,15 +123,45 @@ fn split_flags(args: &[String]) -> Result<(RunFlags, Vec<String>)> {
             _ => break,
         }
     }
-    let cmd = args[i..].to_vec();
-    if cmd.is_empty() {
-        bail!("no command given (see `portproxy help`)");
+    Ok((flags, args[i..].to_vec()))
+}
+
+/// Entry for `run` / `<name>` forms. Empty command resolves to the package's
+/// `dev` script, or — at a workspace root — starts every member package
+/// (Vercel portless behavior).
+async fn cmd_run_entry(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
+    if !cmd.is_empty() {
+        return cmd_run(flags, cmd).await;
     }
-    Ok((flags, cmd))
+    let cwd = std::env::current_dir()?;
+    if flags.name.is_none() {
+        if let Some(ws) = workspace::find_workspace(&cwd) {
+            if cwd == ws.root {
+                return run_all(ws, flags).await;
+            }
+        }
+    }
+    let has_dev = std::fs::read_to_string(cwd.join("package.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("scripts").and_then(|s| s.get("dev")).map(|_| ()))
+        .is_some();
+    if !has_dev {
+        bail!("no command given and no `dev` script in package.json (see `portproxy help`)");
+    }
+    let pm = workspace::detect_package_manager(&cwd);
+    cmd_run(flags, vec![pm.to_string(), "run".into(), "dev".into()]).await
 }
 
 async fn cmd_run(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
     if std::env::var("PORTPROXY").is_ok_and(|v| v == "0" || v == "skip") {
+        return exec_passthrough(&cmd).await;
+    }
+    if ports::is_build_command(&cmd) {
+        eprintln!(
+            "{} build command detected; running without a route",
+            "portproxy:".dimmed()
+        );
         return exec_passthrough(&cmd).await;
     }
     let cwd = std::env::current_dir()?;
@@ -178,6 +208,168 @@ async fn cmd_run(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
     let _ = store.remove_route(&label);
     shutdown_proxy_if_idle(&state, &store);
     code
+}
+
+/// Start every workspace package's `dev` script, each with its own port and
+/// route. Build-only dev scripts run without a route. One wrapper owns all
+/// children; SIGINT/SIGTERM fan out to every process group.
+async fn run_all(ws: workspace::Workspace, flags: RunFlags) -> Result<i32> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let project = workspace::project_name(&ws);
+    if project.is_empty() {
+        bail!("could not infer a project name for the workspace; set one in portproxy.json");
+    }
+    let wt = worktree::worktree_suffix(&ws.root);
+    let root_cfg = ProjectConfig::load(&ws.root).unwrap_or_default();
+    let pm = workspace::detect_package_manager(&ws.root);
+
+    struct Job<'a> {
+        pkg: &'a workspace::Package,
+        /// None = build-only script, runs without a route.
+        label: Option<String>,
+        port: u16,
+    }
+
+    let mut jobs: Vec<Job> = Vec::new();
+    let mut used = std::collections::HashSet::new();
+    for pkg in &ws.packages {
+        let Some(script) = &pkg.dev_script else {
+            continue;
+        };
+        let tokens: Vec<String> = script.split_whitespace().map(String::from).collect();
+        let build_only = ports::is_build_command(&tokens);
+        let mut port = 0;
+        let mut label = None;
+        if !build_only {
+            port = loop {
+                let p = ports::find_free_port().context("no free port in 4000-4999")?;
+                if used.insert(p) {
+                    break p;
+                }
+            };
+            let base = root_cfg
+                .apps
+                .get(&pkg.rel)
+                .and_then(|a| a.name.clone())
+                .map(|n| utils::sanitize_label(&n))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| workspace::package_label(&project, pkg));
+            label = Some(match &wt {
+                Some(sfx) => utils::sanitize_label(&format!("{base}-{sfx}")),
+                None => base,
+            });
+        }
+        jobs.push(Job { pkg, label, port });
+    }
+    if jobs.is_empty() {
+        bail!("no workspace package has a `dev` script");
+    }
+
+    let state = utils::state_dir();
+    let cfg = GlobalConfig::load(&state);
+    ensure_proxy(&state, &cfg).await?;
+    let store = RouteStore::new(state.clone());
+
+    // register everything up front; roll back on the first conflict
+    let mut registered: Vec<String> = Vec::new();
+    for job in &jobs {
+        if let Some(label) = &job.label {
+            if let Err(e) = store.add_route(label, job.port, std::process::id(), flags.force) {
+                for l in &registered {
+                    let _ = store.remove_route(l);
+                }
+                return Err(e);
+            }
+            registered.push(label.clone());
+        }
+    }
+
+    let mut children: Vec<(tokio::process::Child, Option<i32>)> = Vec::new();
+    for job in &jobs {
+        let mut c = tokio::process::Command::new(pm);
+        c.args(["run", "dev"]).current_dir(&job.pkg.dir);
+        match &job.label {
+            Some(label) => {
+                let url = cfg.url_for(label);
+                c.env("PORT", job.port.to_string())
+                    .env("HOST", "127.0.0.1")
+                    .env("PORTPROXY_NAME", label)
+                    .env("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", ".localhost");
+                if let Some(u) = &url {
+                    c.env("PORTPROXY_URL", u);
+                }
+                eprintln!(
+                    "{} {} ({}) -> 127.0.0.1:{}{}",
+                    "portproxy:".green().bold(),
+                    label.bold(),
+                    job.pkg.rel,
+                    job.port,
+                    url.map(|u| format!("  ({u})")).unwrap_or_default()
+                );
+            }
+            None => eprintln!(
+                "{} {}: build-only dev script, no route",
+                "portproxy:".dimmed(),
+                job.pkg.rel
+            ),
+        }
+        unsafe {
+            c.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+        match c.spawn() {
+            Ok(child) => {
+                let pgid = child.id().map(|p| p as i32);
+                children.push((child, pgid));
+            }
+            Err(e) => eprintln!("portproxy: failed to start {}: {e}", job.pkg.rel),
+        }
+    }
+    if children.is_empty() {
+        for l in &registered {
+            let _ = store.remove_route(l);
+        }
+        bail!("no package could be started");
+    }
+
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut exit = 0i32;
+    while !children.is_empty() {
+        tokio::select! {
+            _ = sigint.recv() => {
+                for (_, pg) in &children {
+                    forward(*pg, nix::sys::signal::Signal::SIGINT);
+                }
+            }
+            _ = sigterm.recv() => {
+                for (_, pg) in &children {
+                    forward(*pg, nix::sys::signal::Signal::SIGTERM);
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+        }
+        children.retain_mut(|(child, _)| match child.try_wait() {
+            Ok(Some(status)) => {
+                let c = exit_code(status);
+                if exit == 0 && c != 0 {
+                    exit = c;
+                }
+                false
+            }
+            Ok(None) => true,
+            Err(_) => false,
+        });
+    }
+
+    for l in &registered {
+        let _ = store.remove_route(l);
+    }
+    shutdown_proxy_if_idle(&state, &store);
+    Ok(exit)
 }
 
 async fn exec_passthrough(cmd: &[String]) -> Result<i32> {

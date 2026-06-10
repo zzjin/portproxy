@@ -16,9 +16,27 @@ pub fn find_free_port() -> Option<u16> {
     (MIN_APP_PORT..=MAX_APP_PORT).find(|&p| port_free(p))
 }
 
+/// Build-only tools: run them through portproxy without starting the proxy
+/// or registering a route (Vercel portless's isServerCommand denylist).
+const BUILD_TOOLS: &[&str] = &[
+    "tsc", "tsup", "esbuild", "rollup", "rolldown", "webpack", "rspack", "swc", "babel",
+];
+
+/// True for commands that build rather than serve: a known build tool, or a
+/// dev server invoked with a `build` subcommand (`vite build`, `next build`).
+pub fn is_build_command(cmd: &[String]) -> bool {
+    let Some((idx, tool)) = detect_tool(cmd) else {
+        return false;
+    };
+    if BUILD_TOOLS.contains(&tool.as_str()) {
+        return true;
+    }
+    cmd.get(idx + 1).map(String::as_str) == Some("build")
+}
+
 /// Tool basename after skipping package runners (npx, pnpx, bunx, `pnpm dlx`,
-/// `yarn dlx`, `npm exec`).
-fn detect_tool(cmd: &[String]) -> Option<String> {
+/// `yarn dlx`, `npm exec`). Returns (index in cmd, basename).
+fn detect_tool(cmd: &[String]) -> Option<(usize, String)> {
     let mut i = 0;
     while i < cmd.len() {
         let base = std::path::Path::new(&cmd[i])
@@ -29,7 +47,7 @@ fn detect_tool(cmd: &[String]) -> Option<String> {
             "npx" | "pnpx" | "bunx" => i += 1,
             "pnpm" | "yarn" if cmd.get(i + 1).map(String::as_str) == Some("dlx") => i += 2,
             "npm" if cmd.get(i + 1).map(String::as_str) == Some("exec") => i += 2,
-            _ => return Some(base),
+            _ => return Some((i, base)),
         }
     }
     None
@@ -38,7 +56,7 @@ fn detect_tool(cmd: &[String]) -> Option<String> {
 /// Append --port/--host flags for tools that ignore $PORT.
 pub fn inject_framework_flags(cmd: &[String], port: u16) -> Vec<String> {
     let mut out = cmd.to_vec();
-    let Some(tool) = detect_tool(cmd) else {
+    let Some((_, tool)) = detect_tool(cmd) else {
         return out;
     };
     let p = port.to_string();
@@ -130,5 +148,16 @@ mod tests {
     fn unknown_tool_untouched() {
         let cmd = v(&["next", "dev"]);
         assert_eq!(inject_framework_flags(&cmd, 4001), cmd);
+    }
+
+    #[test]
+    fn build_commands_detected() {
+        assert!(is_build_command(&v(&["tsc", "--watch"])));
+        assert!(is_build_command(&v(&["npx", "tsup"])));
+        assert!(is_build_command(&v(&["vite", "build"])));
+        assert!(is_build_command(&v(&["next", "build"])));
+        assert!(!is_build_command(&v(&["next", "dev"])));
+        assert!(!is_build_command(&v(&["vite"])));
+        assert!(!is_build_command(&v(&["node", "server.js"])));
     }
 }

@@ -73,6 +73,18 @@ Caddy  Caddy
 5. git `git rev-parse --show-toplevel`
 6. 
 
+### Monorepo Vercel portless 
+
+-  workspace`pnpm-workspace.yaml` / package.json `workspaces`
+-  =  `portproxy.json` `name` →  package.json `portproxy` key →
+   npm scope `@example/*` → `example`→ 
+-  `<>-<>``example-web`
+- **workspace  `portproxy run`  `dev` script**
+  build  dev scripttsc/tsup/esbuild/`* build` 
+-  `portproxy.json` 
+  `{ "apps": { "packages/web": { "name": "frontend" } } }`
+-  `portproxy run` = lockfile  pnpm/yarn/bun/npm `dev` script
+
 ### Git worktree 
 
 linked worktree  label ****
@@ -88,7 +100,7 @@ linked worktree  label ****
 1. ****`portless proxy stop` `portless service uninstall`
     1355
 2. ****
-   - `portless.json` → `portproxy.json` `name` `apps`/`turbo` 
+   - `portless.json` → `portproxy.json` `name`  `apps` turbo 
    - `package.json`  `"portless"` key → `"portproxy"` key
 3. ****`portless <cmd>` / `portless run <cmd>` → `portproxy run <cmd>`
     `portless myapp next dev` → `portproxy myapp next dev` 
@@ -118,7 +130,7 @@ linked worktree  label ****
 |  daemon |  +  |  |  portless-rs10s  + 5s  |
 |  | ✅ | ❌ | ✅  Vercel / |
 | worktree  | ✅  `auth.myapp.localhost` | ❌ | ✅  label  `myapp-auth` label  |
-| monorepo  / turbo  | ✅ | ❌ | ❌  |
+| monorepoworkspace /scope //build /apps  | ✅ | ❌ | ✅turbo  |
 | alias / prune / clean | ✅ | ❌ | ✅ |
 | HTTP/2 | ✅ | ❌ | ❌HTTP/1.1Caddy  h2/h3 |
 | Tailscale / ngrok / LAN  | ✅ | ❌ | ❌ |
