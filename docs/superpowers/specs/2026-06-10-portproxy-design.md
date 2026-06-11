@@ -113,6 +113,14 @@ Live-PID route with same hostname → error:
 `"<name>" is already registered by a running process (PID n). Use --force to override.`
 `--force` → SIGTERM old wrapper, replace route.
 
+**`get` semantics (aligned with Vercel handleGet, 2026-06-11):** the name is
+resolved like `run --name` — the cwd's worktree suffix is always applied
+(`--no-worktree` to skip; deliberately NOT exact-match-first, which would leak
+the main checkout's route when both run the same base name). The URL is
+constructed without requiring an active route (cross-service wiring before
+startup); a missing route prints a stderr hint, and without `base_domain` an
+existing route falls back to `http://127.0.0.1:<port>`.
+
 ## CLI surface
 
 ```

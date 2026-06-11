@@ -127,6 +127,19 @@ Only *linked* worktrees are suffixed (detected via `git rev-parse --git-dir`
 vs `--git-common-dir`, with a `.git`-file parsing fallback when the git CLI is
 unavailable). The suffix is the sanitized last segment of the branch name.
 
+`portproxy get` resolves names the same way `run --name` does: inside a
+worktree, `get sample-api` returns the *suffixed* URL of this worktree's
+instance — even when the main checkout runs the same base name at the same
+time (`--no-worktree` skips the suffix). The URL is constructed without
+requiring an active route, so startup scripts can wire services together
+before they are up:
+
+```sh
+API_URL=$(portproxy get sample-api)            # works before the API starts
+portproxy run --name sample-api pnpm dev:api &
+VITE_API_PROXY_TARGET=$API_URL portproxy run --name sample-web pnpm dev:web
+```
+
 ## Configuration
 
 `~/.portproxy/config.toml` (all optional):

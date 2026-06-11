@@ -95,6 +95,10 @@ linked worktree  label ****
 | linked worktree | `feature/auth` | `sample-web-auth` |
 | linked worktree | `main` / detached | `sample-web` |
 
+`portproxy get`  `run --name` worktree  `get sample-web` 
+ worktree  URL checkout `--no-worktree`
+URL 
+
 ##  portless 
 
 1. ****`portless proxy stop` `portless service uninstall`
