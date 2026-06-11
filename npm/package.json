@@ -1,6 +1,6 @@
 {
   "name": "portproxy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Stable named URLs for local dev servers behind a TLS-terminating reverse proxy",
   "license": "MIT",
   "repository": {
