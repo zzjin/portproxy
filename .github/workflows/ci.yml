@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test:
     name: Test
@@ -21,6 +24,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Check Rust formatting
         run: cargo fmt --check
 
@@ -29,6 +37,9 @@ jobs:
 
       - name: Check npm installer syntax
         run: node --check npm/install.js
+
+      - name: Check npm version
+        run: npm --version
 
       - name: Check npm package
         working-directory: npm
