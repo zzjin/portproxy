@@ -1,12 +1,12 @@
-# portproxy 
+# portproxy Migration Guide
 
->  [vercel-labs/portless](https://github.com/vercel-labs/portless)Node 
-> [portless-rs](https://github.com/portless-rs/portless)Rust 
+> For projects moving from [vercel-labs/portless](https://github.com/vercel-labs/portless)
+> (Node.js) or [portless-rs](https://github.com/portless-rs/portless) (Rust).
 
-## 
+## What It Is
 
-portproxy **Caddy/Nginx dev server**  URL 
-
+portproxy assigns stable, named URLs to local development servers that sit behind an
+existing reverse proxy such as Caddy or Nginx. Instead of remembering ports, you run:
 
 ```sh
 cd ~/code/sample-web
@@ -14,136 +14,229 @@ portproxy run pnpm dev
 # portproxy: sample-web -> 127.0.0.1:4123  (https://sample-web.dev.example.test)
 ```
 
- portless **portless  TLS//.localhost 
-portproxy  Caddy/Nginx** Host 
+It follows the same general idea as the portless family, but with a narrower scope:
+portless handles TLS, certificates, and `.localhost` names itself; portproxy leaves
+that layer to the upstream Caddy/Nginx proxy and only routes by `Host`.
 
-```
- ──https──> Caddy/NginxTLS*.dev.example.test ──http──> portproxy:1355 ──> 127.0.0.1:4xxx
-```
-
- portless-rs 
-
-- `portproxy run <cmd>`  4000–4999  `$PORT` 
-  ` -> `  `~/.portproxy/routes.json`
-- **** daemon systemd  100ms 
-  routes.json 5 ****
--  PID 
--  WebSocket `x-portproxy-hops` >5 → 508
-
-## 
-
- `~/.local/bin/portproxy`1.3M 
-
-```
-portproxy run <cmd...>             
-portproxy <name> <cmd...>          
-portproxy list                     
-portproxy get <name> [--no-worktree]   URL worktree 
-portproxy alias <name> <port>      Docker --remove 
-portproxy prune [--force]           dev server
-portproxy proxy start|stop         
-portproxy clean                     + 
+```text
+Browser --https--> Caddy/Nginx (TLS, *.dev.example.test wildcard)
+        --http--> portproxy:1355
+        --> 127.0.0.1:4xxx
 ```
 
- flag`--name <n>``--force` SIGTERM
-`--app-port <p>`
+Runtime model:
 
- `~/.portproxy/config.toml`
+- `portproxy run <cmd>` picks an open port in 4000-4999, injects `$PORT`, writes
+  `name -> port` to `~/.portproxy/routes.json`, then runs the command.
+- The reverse proxy process starts on demand, has no permanent daemon or systemd
+  unit, reloads `routes.json` every 100ms, and exits about 5 seconds after the last
+  route disappears.
+- Routes are cleaned up by PID liveness, so crashed dev servers recover naturally.
+- WebSocket tunneling is supported. `x-portproxy-hops` prevents proxy loops
+  (`>5` returns `508`).
+
+## Usage
+
+The binary is installed at `~/.local/bin/portproxy` by default. It is a single
+small binary with no runtime dependency.
+
+```text
+portproxy run <cmd...>                Run with an inferred name
+portproxy <name> <cmd...>             Run with an explicit name
+portproxy list                        Show active routes
+portproxy get <name> [--no-worktree]  Print a URL without requiring a live route
+portproxy alias <name> <port>         Add a static route; --remove deletes it
+portproxy prune [--force]             Clean orphaned dev servers
+portproxy proxy start|stop            Manually control the proxy
+portproxy clean                       Stop proxy and remove all state
+```
+
+Run flags:
+
+- `--name <n>` overrides name inference.
+- `--force` takes over a live route with the same name and sends `SIGTERM` to the
+  old process.
+- `--app-port <p>` uses a fixed backend port.
+
+Global config lives at `~/.portproxy/config.toml`; every field is optional:
 
 ```toml
-listen = "0.0.0.0:1355"          # Docker  Caddy  loopback
-base_domain = "dev.example.test"   #  get/list  URL
-scheme = "https"                 # 
+listen = "0.0.0.0:1355"              # Use a non-loopback address for Docker-hosted Caddy.
+base_domain = "dev.example.test"     # Only used when printing URLs.
+scheme = "https"                     # Only used when printing URLs.
 ```
 
-Caddy  Caddy 
+Example Caddy configuration:
 
 ```caddyfile
 *.dev.example.test {
-    reverse_proxy host.docker.internal:1355   #  172.17.0.1:1355
+    reverse_proxy host.docker.internal:1355   # Or 172.17.0.1:1355.
 }
 ```
 
-###  Vercel portless 
+### Name Inference
+
+Name inference matches Vercel portless file choices and order:
 
 1. `--name` flag
-2. cwd  `portproxy.json``{ "name": "..." }` cwd
-3. cwd  `package.json` `"portproxy"` key `{ "name": ... }` cwd
-4.  `package.json` `"name"` `@scope/`
-5. git `git rev-parse --show-toplevel`
-6. 
+2. `portproxy.json` in cwd: `{ "name": "..." }`; cwd only, no upward search
+3. `package.json` `"portproxy"` key in cwd; string shorthand or `{ "name": ... }`
+4. Nearest parent `package.json` `"name"` with any npm scope removed
+5. Git repository root directory name from `git rev-parse --show-toplevel`
+6. Current directory name
 
-### Monorepo Vercel portless 
+### Monorepos
 
--  workspace`pnpm-workspace.yaml` / package.json `workspaces`
--  =  `portproxy.json` `name` →  package.json `portproxy` key →
-   npm scope `@example/*` → `example`→ 
--  `<>-<>``example-web`
-- **workspace  `portproxy run`  `dev` script**
-  build  dev scripttsc/tsup/esbuild/`* build` 
--  `portproxy.json` 
+- Workspaces are discovered from `pnpm-workspace.yaml` or `package.json`
+  `workspaces`.
+- The project name comes from root `portproxy.json` `name`, then root
+  `package.json` `portproxy`, then the majority npm scope across packages
+  (`@example/*` -> `example`), then normal root-directory inference.
+- A package route is named `<project>-<package-short-name>` such as `example-web`.
+  If the package short name already equals the project name, it is not repeated.
+- Running bare `portproxy run` at the workspace root starts every package `dev`
+  script with independent ports and routes. Build-style dev scripts such as
+  `tsc`, `tsup`, `esbuild`, or `* build` run without route registration.
+- Root `portproxy.json` can override package names by relative path:
   `{ "apps": { "packages/web": { "name": "frontend" } } }`
--  `portproxy run` = lockfile  pnpm/yarn/bun/npm `dev` script
+- Running bare `portproxy run` inside a package uses the detected package manager
+  from lockfiles and runs that package's `dev` script.
 
-### Git worktree 
+### Git Worktree Suffixes
 
-linked worktree  label ****
+Linked worktrees append the final branch segment inside the same label. This is
+not a subdomain prefix.
 
-| checkout |  |  |
+| Checkout | Branch | Final name |
 |---|---|---|
-|  clone |  | `sample-web` |
-| linked worktree | `feature/auth` | `sample-web-auth` |
-| linked worktree | `main` / detached | `sample-web` |
+| Main clone | Any branch | `sample-web` |
+| Linked worktree | `feature/auth` | `sample-web-auth` |
+| Linked worktree | `main` or detached | `sample-web` |
 
-`portproxy get`  `run --name` worktree  `get sample-web` 
- worktree  URL checkout `--no-worktree`
-URL 
+`portproxy get` and `run --name` use the same worktree resolution. Inside a
+worktree, `portproxy get sample-web` returns the suffixed URL for that worktree;
+the main checkout can run the same base name without collision. `--no-worktree`
+skips suffixing. `get` does not require an existing route, so startup scripts can
+obtain service URLs before the target service has started.
 
-##  portless 
+## Cross-Service Dev Proxies
 
-1. ****`portless proxy stop` `portless service uninstall`
-    1355
-2. ****
-   - `portless.json` → `portproxy.json` `name`  `apps` turbo 
-   - `package.json`  `"portless"` key → `"portproxy"` key
-3. ****`portless <cmd>` / `portless run <cmd>` → `portproxy run <cmd>`
-    `portless myapp next dev` → `portproxy myapp next dev` 
-   portproxy **** `portproxy <cmd>` `<name>`  `run`
-4. **URL **`https://myapp.localhost` → `https://myapp.<base_domain>`
-   worktree URL  `auth.myapp.localhost` `myapp-auth.<base_domain>`
-    label  URL /agent 
-5. ****
+This is the main migration footgun for projects whose frontend dev server proxies
+to another local service. A common example is Vite `server.proxy` forwarding
+`/api` to a backend service. Older setups may point to
+`http://<backend-name>.localhost:1355` and rely on the operating system resolving
+`<backend-name>.localhost`.
+
+portproxy does not modify `/etc/hosts` and does not provide DNS. That layer belongs
+to the upstream Caddy/Nginx proxy, but it only helps browser traffic; it does not
+affect server-side fetches made by the dev server process. Server-side resolution
+of `*.localhost` can therefore fail or hang.
+
+Use the loopback IP as the TCP target and carry the backend route name in the
+`Host` header. portproxy routes by the first label of `Host`, so a request to
+`127.0.0.1:1355` with `Host: example-api` reaches the `example-api` route without any
+DNS lookup.
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:1355',
+        changeOrigin: false,
+        headers: { host: 'example-api' },
+      },
+      '/thread-gateway': {
+        target: 'http://127.0.0.1:1355',
+        ws: true,
+        changeOrigin: false,
+        headers: { host: 'example-api' },
+      },
+    },
+  },
+})
+```
+
+Replace `example-api` with the name that portproxy prints for the backend. It is
+also visible in `portproxy list`.
+
+In worktrees, backend names can include branch suffixes such as `example-api-auth`.
+Avoid hard-coding those names. Use `portproxy get` in the startup script so the
+current worktree suffix is applied consistently, even before the backend route is
+live:
+
+```jsonc
+// package.json
+"scripts": {
+  "dev": "PROXY_API_HOST=$(portproxy get example-api | sed -E 's#^https?://([^.]+).*#\\1#') portproxy run vite"
+}
+```
+
+```ts
+// vite.config.ts
+headers: { host: process.env.PROXY_API_HOST || 'example-api' }
+```
+
+Browser access, HMR, and frontend-only projects without cross-service `/api`
+proxies do not need this change.
+
+## Migrating From portless
+
+1. Stop the old proxy first: `portless proxy stop`. If a system service was
+   installed, also run `portless service uninstall`. Both tools use port `1355` by
+   default, so they conflict.
+2. Rename project config files where present:
+   - `portless.json` -> `portproxy.json`; `name` and `apps` path overrides are
+     supported, but turbo-specific fields are not.
+   - `package.json` `"portless"` key -> `"portproxy"` key; string shorthand and
+     object forms are both supported.
+3. Update commands:
+   - `portless <cmd>` or `portless run <cmd>` -> `portproxy run <cmd>`
+   - Explicit-name form stays the same shape:
+     `portless myapp next dev` -> `portproxy myapp next dev`
+   - portproxy does not support bare `portproxy <cmd>` because it conflicts with
+     the explicit-name form; inferred names must use `run`.
+4. Update URLs:
+   - `https://myapp.localhost` -> `https://myapp.<base_domain>`
+   - Worktree URLs change from `auth.myapp.localhost` to
+     `myapp-auth.<base_domain>`.
+   - Scripts and agent configs with hard-coded old URLs must be updated.
+5. Update environment variables:
 
    | portless | portproxy |
    |---|---|
    | `PORTLESS=0` | `PORTPROXY=0` |
-   | `PORTLESS_STATE_DIR` | `PORTPROXY_STATE_DIR` `~/.portproxy` |
-   | `PORTLESS_URL` | `PORTPROXY_URL` base_domain  |
-   | — | `PORTPROXY_NAME` label |
-   | `PORTLESS_PORT` / `PORTLESS_TLD`  TLS/ |  |
+   | `PORTLESS_STATE_DIR` | `PORTPROXY_STATE_DIR`; defaults to `~/.portproxy` |
+   | `PORTLESS_URL` | `PORTPROXY_URL`; injected only when `base_domain` is configured |
+   | No equivalent | `PORTPROXY_NAME`; final label injected into the child process |
+   | `PORTLESS_PORT`, `PORTLESS_TLD`, and other TLS/domain settings | No equivalent; upstream proxy handles this layer |
 
-6. ****`rm -rf ~/.portless` CA
-   `portless clean` 
+6. Optionally remove old state with `rm -rf ~/.portless` and remove the old local
+   CA from the system trust store if needed. `portless clean` can help with the
+   old tool's cleanup.
 
-## 
+## Differences From Upstream Projects
 
-|  | Vercel portless | portless-rs | **portproxy** |
+| Capability | Vercel portless | portless-rs | portproxy |
 |---|---|---|---|
-| TLS /  CA / 443 | ✅  | ❌  HTTP | ❌  Caddy/Nginx  |
-|  | `*.localhost`+hosts / TLD/mDNS | `*.localhost` | **** Host  label |
-|  daemon |  +  |  |  portless-rs10s  + 5s  |
-|  | ✅ | ❌ | ✅  Vercel / |
-| worktree  | ✅  `auth.myapp.localhost` | ❌ | ✅  label  `myapp-auth` label  |
-| monorepoworkspace /scope //build /apps  | ✅ | ❌ | ✅turbo  |
-| alias / prune / clean | ✅ | ❌ | ✅ |
-| HTTP/2 | ✅ | ❌ | ❌HTTP/1.1Caddy  h2/h3 |
-| Tailscale / ngrok / LAN  | ✅ | ❌ | ❌ |
-|  | `--force`  |  |  Vercel + `--force` |
-|  flag  |  Expo/RN | vite/react-router/astro/ng | vite/react-router/rsbuild/astro/ng npx/pnpm dlx  |
-| X-Forwarded-* |  |  | ** Caddy ** |
-|  | mac/Linux/Windows | Unix | UnixLinux/macOS |
-|  | Node ≥24  | ~1MB | 1.3M  |
-|  | `X-Portless: 1` | `X-Portless: 1` | `X-Portproxy: 1` |
+| TLS, local CA, port 443 | Built in | HTTP only | Deliberately delegated to Caddy/Nginx |
+| Domains | `*.localhost` plus hosts sync, custom TLD, and mDNS | `*.localhost` | Domain-agnostic; matches only the first `Host` label |
+| Long-running daemon | Permanent daemon with optional service install | On demand, exits when idle | Same on-demand model as portless-rs |
+| Name inference | Yes | No, name is required | Yes, same file order as Vercel portless |
+| Worktree suffixes | Subdomain prefix such as `auth.myapp.localhost` | No | Same-label suffix such as `myapp-auth` |
+| Monorepo support | Yes | No | Yes, except turbo-specific integration |
+| `alias`, `prune`, `clean` | Yes | No | Yes |
+| HTTP/2 | Yes | No | No; browser-facing Caddy can still serve h2/h3 |
+| Tailscale, ngrok, LAN sharing | Yes | No | Delegated to the upstream layer |
+| Duplicate names | Error, `--force` can take over | Overwrites | Error, `--force` can take over |
+| Framework flag injection | Broad set including Expo/RN | vite, react-router, astro, ng | vite, react-router, rsbuild, astro, ng, including npx/pnpm dlx wrappers |
+| `X-Forwarded-*` | Generated by portless | Generated by portless-rs | Preserves upstream Caddy values and appends |
+| Platforms | macOS, Linux, Windows | Unix | Unix: Linux and macOS |
+| Size | Node.js runtime, version 24 or newer | About 1 MB | About 1.3 MB single binary |
+| Health probe header | `X-Portless: 1` | `X-Portless: 1` | `X-Portproxy: 1` |
 
-** portless-rs  Vercel portless 
-worktree  TLS/" Caddy/Nginx"**
+In short: portproxy keeps the small, on-demand implementation style of
+portless-rs, adds Vercel portless-style smart naming and worktree discovery, and
+removes TLS/domain ownership so it fits environments that already have a
+Caddy/Nginx entry point.
