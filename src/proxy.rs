@@ -323,14 +323,18 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// URL for a route, derived from the requested host: swap its first label.
-/// `nope.dev.example.test` + route `app` -> `<scheme>://app.dev.example.test`.
+/// URL for a route, derived from the requested host: swap its first label,
+/// keeping any explicit port (Caddy may front a non-standard port).
+/// `nope.dev.example.test:54699` + route `app` -> `<scheme>://app.dev.example.test:54699`.
 /// Works with any upstream domain — no configuration needed.
 fn sibling_url(scheme: &str, requested_host: &str, label: &str) -> String {
-    let host_no_port = requested_host.split(':').next().unwrap_or(requested_host);
-    match host_no_port.split_once('.') {
-        Some((_, rest)) => format!("{scheme}://{label}.{rest}"),
-        None => format!("{scheme}://{label}"),
+    let (host, port) = match requested_host.split_once(':') {
+        Some((h, p)) => (h, format!(":{p}")),
+        None => (requested_host, String::new()),
+    };
+    match host.split_once('.') {
+        Some((_, rest)) => format!("{scheme}://{label}.{rest}{port}"),
+        None => format!("{scheme}://{label}{port}"),
     }
 }
 
@@ -403,8 +407,12 @@ mod tests {
             "https://app.dev.example.test"
         );
         assert_eq!(
+            sibling_url("https", "nope.dev.example.test:54699", "app"),
+            "https://app.dev.example.test:54699"
+        );
+        assert_eq!(
             sibling_url("http", "nope.localhost:1355", "app"),
-            "http://app.localhost"
+            "http://app.localhost:1355"
         );
         assert_eq!(sibling_url("http", "bare", "app"), "http://app");
     }
