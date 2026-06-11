@@ -30,7 +30,8 @@ portproxy run                   # package dir: run its "dev" script
                                 # workspace root: start ALL packages (monorepo)
 portproxy run --script start    # choose a different package.json script
 portproxy list                  # active routes + URLs  <- USE THIS for discovery
-portproxy get <name>            # one app's URL (for cross-service wiring)
+portproxy get <name>            # one app's URL; cwd worktree suffix auto-applied,
+                                # works before the app starts (--no-worktree to skip)
 portproxy alias dashboard 3000    # static route for non-wrapped process (Docker)
 portproxy prune                 # kill orphaned dev servers after crashes
 portproxy proxy start|stop      # manual proxy control (rarely needed)

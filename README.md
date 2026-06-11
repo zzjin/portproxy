@@ -54,7 +54,7 @@ portproxy <name> <cmd...>          run with explicit name
 portproxy proxy start [--foreground] [-l ADDR]
 portproxy proxy stop
 portproxy list                     show active routes
-portproxy get <name>               print URL (needs base_domain in config)
+portproxy get <name> [--no-worktree]  print URL (worktree suffix auto-applied)
 portproxy alias <name> <port> [--remove] [--force]   static route (Docker etc.)
 portproxy prune [--force]          kill orphaned dev servers
 portproxy clean                    stop proxy and remove all state

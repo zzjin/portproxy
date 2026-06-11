@@ -38,7 +38,7 @@ portproxy  Caddy/Nginx** Host
 portproxy run <cmd...>             
 portproxy <name> <cmd...>          
 portproxy list                     
-portproxy get <name>                URL base_domain
+portproxy get <name> [--no-worktree]   URL worktree 
 portproxy alias <name> <port>      Docker --remove 
 portproxy prune [--force]           dev server
 portproxy proxy start|stop         

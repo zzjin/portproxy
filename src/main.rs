@@ -22,7 +22,7 @@ USAGE:
   portproxy proxy start [--foreground] [-l ADDR]
   portproxy proxy stop
   portproxy list                     show active routes
-  portproxy get <name>               print URL (needs base_domain in config)
+  portproxy get <name> [--no-worktree]  print URL (worktree suffix auto-applied)
   portproxy alias <name> <port> [--remove] [--force]
   portproxy prune [--force]          kill orphaned dev servers
   portproxy clean                    stop proxy and remove all state
@@ -646,22 +646,48 @@ fn cmd_list() -> Result<i32> {
     Ok(0)
 }
 
+/// Vercel-portless semantics: apply the cwd's worktree suffix (unless
+/// --no-worktree) and construct the URL WITHOUT requiring an active route —
+/// cross-service wiring needs app B's URL before B has started.
 fn cmd_get(args: &[String]) -> Result<i32> {
-    let name = args.first().context("usage: portproxy get <name>")?;
+    let skip_worktree = args.iter().any(|a| a == "--no-worktree");
+    let name = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .context("usage: portproxy get <name> [--no-worktree]")?;
+    let name = utils::sanitize_label(name);
+    if name.is_empty() {
+        bail!("invalid name");
+    }
+    let effective = if skip_worktree {
+        name
+    } else {
+        match worktree::worktree_suffix(&std::env::current_dir()?) {
+            Some(sfx) => utils::sanitize_label(&format!("{name}-{sfx}")),
+            None => name,
+        }
+    };
+
     let state = utils::state_dir();
     let cfg = GlobalConfig::load(&state);
     let routes = RouteStore::new(state.clone()).load();
-    let route = routes
-        .iter()
-        .find(|r| &r.hostname == name)
-        .with_context(|| format!("no active route named \"{name}\""))?;
-    match cfg.url_for(&route.hostname) {
+    let route = routes.iter().find(|r| r.hostname == effective);
+    if route.is_none() {
+        eprintln!(
+            "{} no active route named \"{effective}\" (it may not be running yet)",
+            "portproxy:".dimmed()
+        );
+    }
+    match cfg.url_for(&effective) {
         Some(url) => println!("{url}"),
-        None => bail!(
-            "base_domain not set in {}; cannot build a URL (route is on 127.0.0.1:{})",
-            state.join("config.toml").display(),
-            route.port
-        ),
+        None => match route {
+            // no base_domain configured: fall back to the direct address
+            Some(r) => println!("http://127.0.0.1:{}", r.port),
+            None => bail!(
+                "base_domain not set in {}; cannot build a URL",
+                state.join("config.toml").display()
+            ),
+        },
     }
     Ok(0)
 }
