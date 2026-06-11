@@ -75,10 +75,23 @@ impl GlobalConfig {
         cfg
     }
 
+    /// With `base_domain` unset, fall back to `http://<label>.localhost:<port>`:
+    /// `.localhost` is loopback by spec (RFC 6761) and the proxy routes on the
+    /// first Host label, so the URL is valid before the app ever starts.
+    /// Scheme is forced to http — without a domain there is no TLS terminator
+    /// in front of the proxy.
     pub fn url_for(&self, label: &str) -> Option<String> {
-        self.base_domain
-            .as_ref()
-            .map(|d| format!("{}://{label}.{d}", self.scheme))
+        match &self.base_domain {
+            Some(d) => Some(format!("{}://{label}.{d}", self.scheme)),
+            None => {
+                let port = self
+                    .listen
+                    .first()
+                    .and_then(|l| l.rsplit(':').next())
+                    .and_then(|p| p.parse::<u16>().ok())?;
+                Some(format!("http://{label}.localhost:{port}"))
+            }
+        }
     }
 }
 
@@ -147,7 +160,23 @@ mod tests {
         // dual-stack loopback: .localhost resolves to ::1 per RFC 6761
         assert_eq!(c.listen, vec!["127.0.0.1:1355", "[::1]:1355"]);
         assert_eq!(c.scheme, "https");
-        assert!(c.url_for("app").is_none());
+        // no base_domain: .localhost fallback on the listen port, http only
+        assert_eq!(
+            c.url_for("app").as_deref(),
+            Some("http://app.localhost:1355")
+        );
+    }
+
+    #[test]
+    fn localhost_fallback_uses_listen_port() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let d = tempdir().unwrap();
+        std::fs::write(d.path().join("config.toml"), "listen = \"[::1]:7777\"").unwrap();
+        let c = GlobalConfig::load(d.path());
+        assert_eq!(
+            c.url_for("app").as_deref(),
+            Some("http://app.localhost:7777")
+        );
     }
 
     #[test]
