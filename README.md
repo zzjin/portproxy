@@ -37,7 +37,7 @@ Via npm (downloads the prebuilt binary for your platform from GitHub Releases
 on postinstall; Linux x64/arm64 and macOS x64/arm64):
 
 ```sh
-npm install -g portproxy
+npm install -g @zzjin/portproxy
 ```
 
 Or build from source:

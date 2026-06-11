@@ -219,7 +219,10 @@ mod tests {
     fn workspace_member_gets_project_prefixed_label() {
         let d = monorepo();
         assert_eq!(infer_name(&d.path().join("packages/web")), "example-web");
-        assert_eq!(infer_name(&d.path().join("packages/api/src")), "example-api");
+        assert_eq!(
+            infer_name(&d.path().join("packages/api/src")),
+            "example-api"
+        );
     }
 
     #[test]

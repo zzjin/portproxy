@@ -5,13 +5,13 @@ Status: approved
 
 ## Goal
 
-Distribute the `portproxy` Rust binary via npm (`npm i -g portproxy`), using the
+Distribute the `portproxy` Rust binary via npm (`npm i -g @zzjin/portproxy`), using the
 same mechanism as portless-rs: a single npm package whose `postinstall` script
 downloads the prebuilt binary for the current platform from GitHub Releases.
 
 ## Decisions
 
-- **Package name**: `portproxy` (verified free on npmjs.org).
+- **Package name**: `@zzjin/portproxy` (unscoped `portproxy` is rejected by npm as too similar to `port-proxy`).
 - **Mechanism**: portless-rs pattern (user's explicit choice) — single package,
   `postinstall: node install.js`, download `portproxy-<target>.tar.gz` from
   `https://github.com/zzjin/portproxy/releases/download/v<version>/`.
@@ -28,9 +28,12 @@ downloads the prebuilt binary for the current platform from GitHub Releases.
 
 ### `npm/` directory
 
-- `npm/package.json` — `bin: { portproxy: "bin/portproxy" }`,
-  `scripts.postinstall: node install.js`, `files: ["bin/", "install.js"]`,
-  `os: ["darwin", "linux"]`, `engines.node >= 14`. No runtime dependencies.
+- `npm/package.json` — package name `@zzjin/portproxy`,
+  `bin: { portproxy: "bin/portproxy" }`, `scripts.postinstall: node install.js`,
+  `files: ["README.md", "bin/", "install.js"]`, `os: ["darwin", "linux"]`,
+  `engines.node >= 14`. No runtime dependencies.
+- `npm/README.md` — npmjs.org package page content. The package is published
+  from `npm/`, so the repository root README is not included automatically.
 - `npm/install.js` — zero-dependency Node script (CommonJS, stdlib only):
   1. Map `process.platform` + `process.arch` to a Rust target triple; throw a
      helpful error on unsupported platforms.
@@ -43,27 +46,41 @@ downloads the prebuilt binary for the current platform from GitHub Releases.
   entry to this path at install time; postinstall overwrites it with the real
   binary. If postinstall was skipped, running it prints an error and exits 1.
 
+### CI: `.github/workflows/ci.yml`
+
+Triggered on pull requests and pushes to `main`:
+
+1. `cargo fmt --check`
+2. `cargo test --locked`
+3. `node --check npm/install.js`
+4. `npm pack --dry-run` from `npm/`
+
 ### CI: `.github/workflows/release.yml`
 
-Triggered on tag push `v*`:
+Triggered on pushes to `main` and tag pushes `v*`:
 
-1. **check-version** — assert tag version == Cargo.toml version ==
-   npm/package.json version.
-2. **build** — 4-way matrix, all native builds (no cross-compilation):
+1. **metadata** — assert `Cargo.toml` version == `npm/package.json` version.
+   On tag pushes, assert tag `v<X.Y.Z>` matches both. On `main` pushes, compute
+   nightly version `<base>-nightly.<github_run_number>` and release tag
+   `v<base>-nightly.<github_run_number>`.
+2. **build** — 4-way matrix:
    `ubuntu-latest` (x86_64-linux), `ubuntu-24.04-arm` (aarch64-linux),
-   `macos-13` (x86_64-darwin), `macos-latest` (aarch64-darwin).
+   `macos-latest` cross-compiling x86_64-darwin, and `macos-latest`
+   native aarch64-darwin.
    Each builds `cargo build --release`, packages
    `portproxy-<target>.tar.gz` containing the single `portproxy` binary,
    uploads it as a workflow artifact.
-3. **release** — downloads all artifacts, creates the GitHub Release with the
-   4 tarballs attached.
-4. **npm-publish** — after the release exists (assets must be downloadable
-   before the package goes live), `npm publish` from `npm/` using the
-   `NPM_TOKEN` repository secret.
+3. **github-release** — downloads all artifacts, creates a prerelease for
+   nightly builds or a normal GitHub Release for tag builds.
+4. **npm-publish** — after the GitHub release exists (assets must be
+   downloadable before the package goes live), publishes from `npm/` using the
+   `NPM_TOKEN` repository secret. Nightly builds temporarily set the npm package
+   version to `<base>-nightly.<github_run_number>` and publish with dist-tag
+   `nightly`; tag builds publish the checked-in version with dist-tag `latest`.
 
 ### README
 
-Add an npm install section (`npm i -g portproxy`) before the cargo
+Add an npm install section (`npm i -g @zzjin/portproxy`) before the cargo
 instructions, noting supported platforms.
 
 ## Testing

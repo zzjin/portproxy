@@ -1,5 +1,5 @@
 #!/bin/sh
 # This file is replaced by the real binary during postinstall.
 # If you see this message, postinstall did not run (e.g. --ignore-scripts).
-echo "portproxy binary not installed yet. Run: npm install -g portproxy" >&2
+echo "portproxy binary not installed yet. Run: npm install -g @zzjin/portproxy" >&2
 exit 1

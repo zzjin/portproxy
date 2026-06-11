@@ -1,11 +1,11 @@
 {
-  "name": "portproxy",
-  "version": "0.2.0",
+  "name": "@zzjin/portproxy",
+  "version": "0.2.1",
   "description": "Stable named URLs for local dev servers behind a TLS-terminating reverse proxy",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zzjin/portproxy.git"
+    "url": "git+https://github.com/zzjin/portproxy.git"
   },
   "homepage": "https://github.com/zzjin/portproxy",
   "keywords": [
@@ -25,6 +25,9 @@
   "scripts": {
     "postinstall": "node install.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "os": [
     "darwin",
     "linux"
@@ -33,6 +36,7 @@
     "node": ">=14"
   },
   "files": [
+    "README.md",
     "bin/",
     "install.js"
   ]

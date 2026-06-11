@@ -1,6 +1,6 @@
 [package]
 name = "portproxy"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT"
 description = "Stable named URLs for local dev servers behind a TLS-terminating reverse proxy"

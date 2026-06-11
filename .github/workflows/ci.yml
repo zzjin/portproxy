@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Test Rust
+        run: cargo test --locked
+
+      - name: Check npm installer syntax
+        run: node --check npm/install.js
+
+      - name: Check npm package
+        working-directory: npm
+        run: npm pack --dry-run
