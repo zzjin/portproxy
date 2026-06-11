@@ -145,8 +145,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          registry-url: https://registry.npmjs.org
+          node-version: "24"
+
+      - name: Check npm version
+        run: npm --version
 
       - name: Set nightly package version
         if: needs.metadata.outputs.channel == 'nightly'
@@ -156,13 +158,9 @@ jobs:
       - name: Publish nightly
         if: needs.metadata.outputs.channel == 'nightly'
         working-directory: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access=public --tag nightly
 
       - name: Publish release
         if: needs.metadata.outputs.channel == 'release'
         working-directory: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access=public --tag latest
