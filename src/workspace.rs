@@ -9,8 +9,8 @@ pub struct Package {
     pub name: String,
     /// Name with `@scope/` stripped.
     pub short: String,
-    /// Contents of `scripts.dev`, when present.
-    pub dev_script: Option<String>,
+    /// package.json `scripts` map (script selection happens at run time).
+    pub scripts: HashMap<String, String>,
     /// Path relative to the workspace root, `/`-separated (apps-map key).
     pub rel: String,
 }
@@ -143,11 +143,15 @@ fn load_package(root: &Path, dir: PathBuf) -> Option<Package> {
         .map(String::from)
         .or_else(|| dir.file_name().map(|f| f.to_string_lossy().to_string()))?;
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
-    let dev_script = v
+    let scripts: HashMap<String, String> = v
         .get("scripts")
-        .and_then(|s| s.get("dev"))
-        .and_then(|d| d.as_str())
-        .map(String::from);
+        .and_then(|s| s.as_object())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
     let rel = dir
         .strip_prefix(root)
         .ok()?
@@ -159,30 +163,21 @@ fn load_package(root: &Path, dir: PathBuf) -> Option<Package> {
         dir,
         name,
         short,
-        dev_script,
+        scripts,
         rel,
     })
 }
 
 /// Project name, Vercel-portless precedence:
-/// 1. portproxy.json `name` at workspace root
-/// 2. package.json `portproxy` key at workspace root
-/// 3. most common npm scope across member packages (`@example/web` -> `example`)
-/// 4. plain inference on the root (package.json name -> git root -> basename)
+/// 1. root config name (portproxy.json, or package.json `portproxy` key)
+/// 2. most common npm scope across member packages (`@example/web` -> `example`)
+/// 3. plain inference on the root (package.json name -> git root -> basename)
 pub fn project_name(ws: &Workspace) -> String {
     if let Some(pc) = crate::config::ProjectConfig::load(&ws.root) {
         if let Some(s) = pc.name.as_deref().map(sanitize_label) {
             if !s.is_empty() {
                 return s;
             }
-        }
-    }
-    if let Some(s) = crate::naming::package_json_portproxy_key(&ws.root)
-        .as_deref()
-        .map(sanitize_label)
-    {
-        if !s.is_empty() {
-            return s;
         }
     }
     let mut counts: HashMap<&str, usize> = HashMap::new();

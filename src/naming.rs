@@ -16,19 +16,13 @@ use std::path::Path;
 ///
 /// A source whose value sanitizes to empty falls through to the next one.
 pub fn infer_name(cwd: &Path) -> String {
+    // ProjectConfig::load covers both portproxy.json and the package.json
+    // `portproxy` key (Vercel loadConfig precedence)
     if let Some(pc) = ProjectConfig::load(cwd) {
         if let Some(s) = pc.name.as_deref().map(sanitize_label) {
             if !s.is_empty() {
                 return s;
             }
-        }
-    }
-    if let Some(s) = package_json_portproxy_key(cwd)
-        .as_deref()
-        .map(sanitize_label)
-    {
-        if !s.is_empty() {
-            return s;
         }
     }
     if let Some(ws) = crate::workspace::find_workspace(cwd) {
@@ -80,19 +74,6 @@ pub fn infer_name_plain(cwd: &Path) -> String {
 fn read_package_json(dir: &Path) -> Option<serde_json::Value> {
     let data = std::fs::read_to_string(dir.join("package.json")).ok()?;
     serde_json::from_str(&data).ok()
-}
-
-/// `portproxy` key in cwd's package.json: `"portproxy": "name"` shorthand or
-/// `"portproxy": { "name": "..." }`.
-pub(crate) fn package_json_portproxy_key(dir: &Path) -> Option<String> {
-    match read_package_json(dir)?.get("portproxy")? {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Object(o) => match o.get("name") {
-            Some(serde_json::Value::String(s)) => Some(s.clone()),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 /// `name` field of the nearest package.json walking up, `@scope/` stripped.

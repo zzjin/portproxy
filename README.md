@@ -141,8 +141,30 @@ If Caddy runs in Docker without host networking, set `listen` to an address
 the container can reach (e.g. the docker bridge gateway `172.17.0.1:1355` or
 `0.0.0.0:1355` + firewall).
 
+Per-project config — `portproxy.json` in the project directory, or the
+package.json `"portproxy"` key (string shorthand sets the name):
+
+```json
+{
+  "name": "myapp",
+  "script": "dev",
+  "appPort": 4123,
+  "proxy": true,
+  "apps": { "packages/web": { "name": "frontend", "script": "serve" } }
+}
+```
+
+- `script` — package.json script used by bare `portproxy run` (default `dev`,
+  `--script` flag wins)
+- `appPort` — fixed backend port instead of random 4000–4999
+- `proxy` — `false`: run without a route; `true`: always route (skips
+  build-command auto-detection); absent: auto
+- `apps` — per-package overrides at a workspace root (same keys), keyed by
+  root-relative path
+
 Environment: `PORTPROXY_STATE_DIR` (state location, default `~/.portproxy`),
-`PORTPROXY=0` (bypass).
+`PORTPROXY_LISTEN` (proxy listen address, beats config.toml),
+`PORTPROXY_APP_PORT` (fixed app port), `PORTPROXY=0` (bypass).
 
 ### Caddy
 
@@ -179,6 +201,44 @@ For tools that ignore `$PORT`, flags are appended automatically:
 vite / react-router / rsbuild get `--port N --strictPort --host 127.0.0.1`;
 astro / ng get `--port N --host 127.0.0.1` (also through npx / pnpm dlx /
 yarn dlx / bunx). Next.js, Nuxt, Express etc. honor `$PORT` directly.
+
+## Agent skill
+
+`skills/portproxy/SKILL.md` teaches AI agents (Claude Code etc.) how to use
+portproxy: discover URLs via `list`/`get`, never hardcode ports, start dev
+servers through the wrapper. Symlink or copy it into your agent's skills
+directory.
+
+## Design decisions — what we deliberately don't do
+
+portproxy assumes a TLS-terminating reverse proxy (Caddy/Nginx) in front of
+it. Everything that proxy already does better is out of scope, on purpose:
+
+- **TLS / local CA / port 443 / `trust`** — Caddy terminates TLS with real
+  certificates on the public domain. A local CA would add state, sudo
+  prompts, and trust-store mutation for zero benefit here.
+- **DNS, `/etc/hosts` sync, custom TLDs, mDNS/LAN** — the upstream proxy's
+  (sub)domains are real DNS names; nothing to resolve locally.
+- **HTTP/2** — portless uses h2 to dodge the browser's 6-connections-per-host
+  HTTP/1.1 limit. That limit applies browser-side, where Caddy already
+  speaks h2/h3; the Caddy→portproxy loopback hop has no such limit.
+- **Subdomain / `--wildcard` multi-tenant routing** — multi-level wildcard
+  hostnames (`tenant1.myapp.example.com`) need multi-level wildcard
+  certificates, which is upstream territory. Configure extra hostnames in
+  Caddy and point them at the same app with `portproxy alias` if needed.
+- **`service install` / resident daemon** — the proxy spawns on demand and
+  exits when idle (portless-rs philosophy). After a reboot the next
+  `portproxy run` brings everything back. Corner case: alias-only setups
+  (pid 0 routes keep the proxy alive but nothing respawns it after reboot)
+  — run `portproxy proxy start` once, or wrap it in your own systemd unit.
+- **Tailscale / ngrok / funnel sharing** — your Caddy domain *is* the share
+  URL; exposure policy belongs to the proxy/firewall layer.
+- **Expo / React Native flag injection** — those flows are LAN-device
+  debugging on a laptop; meaningless on a headless server.
+- **Turborepo-specific integration** — `portproxy run` at a workspace root
+  spawns each package directly; if you prefer turbo's orchestration,
+  `portproxy run turbo dev` still works as a single wrapped command (one
+  route, turbo's own port management inside).
 
 ## Development
 

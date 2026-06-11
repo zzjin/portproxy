@@ -31,15 +31,22 @@ RUN FLAGS:
   --name <n>      override inferred name (worktree suffix still applies)
   --force         take over a name registered by a live process
   --app-port <p>  fixed backend port instead of random 4000-4999
+  --script <s>    package.json script to run when no command given (default dev)
 
 ENV:
   PORTPROXY=0           bypass portproxy, run the command directly
   PORTPROXY_STATE_DIR   state directory (default ~/.portproxy)
+  PORTPROXY_LISTEN      proxy listen address (overrides config.toml)
+  PORTPROXY_APP_PORT    fixed backend port (same as --app-port)
 
-CONFIG (~/.portproxy/config.toml):
+GLOBAL CONFIG (~/.portproxy/config.toml):
   listen = \"127.0.0.1:1355\"        proxy listen address
   base_domain = \"dev.example.test\"  for printed URLs only
   scheme = \"https\"                 for printed URLs only
+
+PROJECT CONFIG (portproxy.json in project dir, or package.json \"portproxy\" key):
+  { \"name\": \"myapp\", \"script\": \"dev\", \"appPort\": 4123, \"proxy\": true,
+    \"apps\": { \"packages/web\": { \"name\": \"frontend\" } } }
 ";
 
 #[tokio::main]
@@ -95,6 +102,7 @@ struct RunFlags {
     name: Option<String>,
     force: bool,
     app_port: Option<u16>,
+    script: Option<String>,
 }
 
 /// Split leading portproxy flags from the command to execute.
@@ -120,6 +128,14 @@ fn split_flags(args: &[String]) -> Result<(RunFlags, Vec<String>)> {
                 );
                 i += 2;
             }
+            "--script" => {
+                flags.script = Some(
+                    args.get(i + 1)
+                        .context("--script requires a value")?
+                        .clone(),
+                );
+                i += 2;
+            }
             _ => break,
         }
     }
@@ -141,30 +157,44 @@ async fn cmd_run_entry(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
             }
         }
     }
-    let has_dev = std::fs::read_to_string(cwd.join("package.json"))
+    // script choice: --script > project config `script` > "dev"
+    let script = flags
+        .script
+        .clone()
+        .or_else(|| ProjectConfig::load(&cwd).and_then(|c| c.script))
+        .unwrap_or_else(|| "dev".into());
+    let has_script = std::fs::read_to_string(cwd.join("package.json"))
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("scripts").and_then(|s| s.get("dev")).map(|_| ()))
+        .and_then(|v| v.get("scripts").and_then(|s| s.get(&script)).map(|_| ()))
         .is_some();
-    if !has_dev {
-        bail!("no command given and no `dev` script in package.json (see `portproxy help`)");
+    if !has_script {
+        bail!("no command given and no `{script}` script in package.json (see `portproxy help`)");
     }
     let pm = workspace::detect_package_manager(&cwd);
-    cmd_run(flags, vec![pm.to_string(), "run".into(), "dev".into()]).await
+    cmd_run(flags, vec![pm.to_string(), "run".into(), script]).await
 }
 
 async fn cmd_run(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
     if std::env::var("PORTPROXY").is_ok_and(|v| v == "0" || v == "skip") {
         return exec_passthrough(&cmd).await;
     }
-    if ports::is_build_command(&cmd) {
-        eprintln!(
-            "{} build command detected; running without a route",
-            "portproxy:".dimmed()
-        );
-        return exec_passthrough(&cmd).await;
-    }
     let cwd = std::env::current_dir()?;
+    let pc = ProjectConfig::load(&cwd).unwrap_or_default();
+    // proxy: false = never route; true = always route; absent = auto-detect
+    match pc.proxy {
+        Some(false) => return exec_passthrough(&cmd).await,
+        Some(true) => {}
+        None => {
+            if ports::is_build_command(&cmd) {
+                eprintln!(
+                    "{} build command detected; running without a route",
+                    "portproxy:".dimmed()
+                );
+                return exec_passthrough(&cmd).await;
+            }
+        }
+    }
     let base = match &flags.name {
         Some(n) => utils::sanitize_label(n),
         None => naming::infer_name(&cwd),
@@ -184,7 +214,14 @@ async fn cmd_run(flags: RunFlags, cmd: Vec<String>) -> Result<i32> {
     let cfg = GlobalConfig::load(&state);
     ensure_proxy(&state, &cfg).await?;
 
-    let port = match flags.app_port {
+    // port: --app-port > PORTPROXY_APP_PORT > project config appPort > random
+    let fixed_port = flags.app_port.or_else(|| {
+        std::env::var("PORTPROXY_APP_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .or(pc.app_port)
+    });
+    let port = match fixed_port {
         Some(p) => p,
         None => ports::find_free_port().context("no free port in 4000-4999")?,
     };
@@ -226,31 +263,52 @@ async fn run_all(ws: workspace::Workspace, flags: RunFlags) -> Result<i32> {
 
     struct Job<'a> {
         pkg: &'a workspace::Package,
-        /// None = build-only script, runs without a route.
+        /// None = build-only / proxy:false script, runs without a route.
         label: Option<String>,
         port: u16,
+        script: String,
     }
 
     let mut jobs: Vec<Job> = Vec::new();
     let mut used = std::collections::HashSet::new();
     for pkg in &ws.packages {
-        let Some(script) = &pkg.dev_script else {
+        let over = root_cfg.apps.get(&pkg.rel);
+        let pkg_cfg = ProjectConfig::load(&pkg.dir).unwrap_or_default();
+        // script: --script > root apps override > package's own config > "dev"
+        let script_name = flags
+            .script
+            .clone()
+            .or_else(|| over.and_then(|a| a.script.clone()))
+            .or_else(|| pkg_cfg.script.clone())
+            .unwrap_or_else(|| "dev".into());
+        let Some(script) = pkg.scripts.get(&script_name) else {
             continue;
         };
+        // proxy: false = route-less; true = always; absent = build auto-detect
+        let proxy_mode = over.and_then(|a| a.proxy).or(pkg_cfg.proxy);
         let tokens: Vec<String> = script.split_whitespace().map(String::from).collect();
-        let build_only = ports::is_build_command(&tokens);
+        let routeless = match proxy_mode {
+            Some(false) => true,
+            Some(true) => false,
+            None => ports::is_build_command(&tokens),
+        };
         let mut port = 0;
         let mut label = None;
-        if !build_only {
-            port = loop {
-                let p = ports::find_free_port().context("no free port in 4000-4999")?;
-                if used.insert(p) {
-                    break p;
+        if !routeless {
+            let fixed = over.and_then(|a| a.app_port).or(pkg_cfg.app_port);
+            port = match fixed {
+                Some(p) => {
+                    used.insert(p);
+                    p
                 }
+                None => loop {
+                    let p = ports::find_free_port().context("no free port in 4000-4999")?;
+                    if used.insert(p) {
+                        break p;
+                    }
+                },
             };
-            let base = root_cfg
-                .apps
-                .get(&pkg.rel)
+            let base = over
                 .and_then(|a| a.name.clone())
                 .map(|n| utils::sanitize_label(&n))
                 .filter(|s| !s.is_empty())
@@ -260,10 +318,15 @@ async fn run_all(ws: workspace::Workspace, flags: RunFlags) -> Result<i32> {
                 None => base,
             });
         }
-        jobs.push(Job { pkg, label, port });
+        jobs.push(Job {
+            pkg,
+            label,
+            port,
+            script: script_name,
+        });
     }
     if jobs.is_empty() {
-        bail!("no workspace package has a `dev` script");
+        bail!("no workspace package has a runnable script");
     }
 
     let state = utils::state_dir();
@@ -288,7 +351,7 @@ async fn run_all(ws: workspace::Workspace, flags: RunFlags) -> Result<i32> {
     let mut children: Vec<(tokio::process::Child, Option<i32>)> = Vec::new();
     for job in &jobs {
         let mut c = tokio::process::Command::new(pm);
-        c.args(["run", "dev"]).current_dir(&job.pkg.dir);
+        c.args(["run", &job.script]).current_dir(&job.pkg.dir);
         match &job.label {
             Some(label) => {
                 let url = cfg.url_for(label);
@@ -309,7 +372,7 @@ async fn run_all(ws: workspace::Workspace, flags: RunFlags) -> Result<i32> {
                 );
             }
             None => eprintln!(
-                "{} {}: build-only dev script, no route",
+                "{} {}: route-less script (build-only or proxy:false)",
                 "portproxy:".dimmed(),
                 job.pkg.rel
             ),
