@@ -41,7 +41,8 @@ ENV:
 
 GLOBAL CONFIG (~/.portproxy/config.toml):
   listen = \"127.0.0.1:1355\"        proxy listen address
-  base_domain = \"dev.example.test\"  for printed URLs only
+  base_domain = \"dev.example.test\"  for printed URLs only; unset prints
+                                    http://<name>.localhost:<listen port>
   scheme = \"https\"                 for printed URLs only
 
 PROJECT CONFIG (portproxy.json in project dir, or package.json \"portproxy\" key):
@@ -696,24 +697,20 @@ fn cmd_get(args: &[String]) -> Result<i32> {
     let state = utils::state_dir();
     let cfg = GlobalConfig::load(&state);
     let routes = RouteStore::new(state.clone()).load();
-    let route = routes.iter().find(|r| r.hostname == effective);
-    if route.is_none() {
+    if !routes.iter().any(|r| r.hostname == effective) {
         eprintln!(
             "{} no active route named \"{effective}\" (it may not be running yet)",
             "portproxy:".dimmed()
         );
     }
-    match cfg.url_for(&effective) {
-        Some(url) => println!("{url}"),
-        None => match route {
-            // no base_domain configured: fall back to the direct address
-            Some(r) => println!("http://127.0.0.1:{}", r.port),
-            None => bail!(
-                "base_domain not set in {}; cannot build a URL",
-                state.join("config.toml").display()
-            ),
-        },
-    }
+    // url_for only fails when the listen address has no parsable port
+    let url = cfg.url_for(&effective).with_context(|| {
+        format!(
+            "cannot build a URL: invalid listen address in {}",
+            state.join("config.toml").display()
+        )
+    })?;
+    println!("{url}");
     Ok(0)
 }
 

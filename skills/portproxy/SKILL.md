@@ -87,7 +87,8 @@ Global `~/.portproxy/config.toml`: `listen` (proxy address — string or array;
 default dual-stack loopback `["127.0.0.1:1355", "[::1]:1355"]` so server-side
 `http://name.localhost:1355` requests, which resolve to `::1` per RFC 6761,
 work alongside Caddy's `127.0.0.1`), `base_domain` + `scheme` (URL printing
-only).
+only; unset falls back to `http://<name>.localhost:<listen port>`, which
+routes through the proxy with zero configuration).
 
 ## Environment Variables
 
@@ -99,7 +100,7 @@ only).
 | `PORTPROXY_STATE_DIR` | State directory (default ~/.portproxy) |
 
 Injected into child processes: `PORT`, `HOST=127.0.0.1`, `PORTPROXY_NAME`,
-`PORTPROXY_URL` (when base_domain configured).
+`PORTPROXY_URL` (`.localhost` fallback when base_domain unset).
 
 ## Troubleshooting
 

@@ -69,6 +69,10 @@ base_domain = "dev.example.test"     # Only used when printing URLs.
 scheme = "https"                     # Only used when printing URLs.
 ```
 
+With `base_domain` unset, printed URLs fall back to
+`http://<name>.localhost:<listen port>`, which already routes through the
+proxy — configure a domain only when a fronting Caddy/Nginx serves one.
+
 The dual-stack default exists because `*.localhost` resolves to `::1`
 (RFC 6761): server-side fetches to `http://name.localhost:1355` arrive over
 IPv6, while Caddy and probes use `127.0.0.1`. With both loopbacks bound,
@@ -217,7 +221,7 @@ proxies do not need this change.
    |---|---|
    | `PORTLESS=0` | `PORTPROXY=0` |
    | `PORTLESS_STATE_DIR` | `PORTPROXY_STATE_DIR`; defaults to `~/.portproxy` |
-   | `PORTLESS_URL` | `PORTPROXY_URL`; injected only when `base_domain` is configured |
+   | `PORTLESS_URL` | `PORTPROXY_URL`; `.localhost` fallback URL when `base_domain` is unset |
    | No equivalent | `PORTPROXY_NAME`; final label injected into the child process |
    | `PORTLESS_PORT`, `PORTLESS_TLD`, and other TLS/domain settings | No equivalent; upstream proxy handles this layer |
 

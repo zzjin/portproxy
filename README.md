@@ -151,6 +151,13 @@ base_domain = "dev.example.test" # only used to print URLs (get/list/banner)
 scheme = "https"                 # only used to print URLs
 ```
 
+With `base_domain` unset, printed URLs fall back to
+`http://<name>.localhost:<listen port>` — `.localhost` is loopback by spec
+(RFC 6761) and the proxy routes on the first Host label, so these URLs work
+with zero configuration and are valid before the app has even started.
+Set `base_domain` only when a fronting Caddy/Nginx serves a real domain
+(remote access, TLS).
+
 The dual-stack default matters for **server-side `.localhost` requests**:
 `*.localhost` resolves to `::1` (RFC 6761, e.g. via systemd-resolved), so an
 internal fetch to `http://example-api.localhost:1355` arrives over IPv6 — an
@@ -217,7 +224,7 @@ server {
 | `PORT` | allocated port |
 | `HOST` | `127.0.0.1` |
 | `PORTPROXY_NAME` | resolved label |
-| `PORTPROXY_URL` | full URL (only when `base_domain` is configured) |
+| `PORTPROXY_URL` | full URL (`.localhost` fallback when `base_domain` unset) |
 
 For tools that ignore `$PORT`, flags are appended automatically:
 vite / react-router / rsbuild get `--port N --strictPort --host 127.0.0.1`;
