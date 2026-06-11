@@ -61,10 +61,19 @@ Run flags:
 Global config lives at `~/.portproxy/config.toml`; every field is optional:
 
 ```toml
-listen = "0.0.0.0:1355"              # Use a non-loopback address for Docker-hosted Caddy.
+# Default: dual-stack loopback (string or array accepted).
+# For Docker-hosted Caddy use "[::]:1355" (all interfaces, both stacks)
+# or the bridge gateway address.
+listen = ["127.0.0.1:1355", "[::1]:1355"]
 base_domain = "dev.example.test"     # Only used when printing URLs.
 scheme = "https"                     # Only used when printing URLs.
 ```
+
+The dual-stack default exists because `*.localhost` resolves to `::1`
+(RFC 6761): server-side fetches to `http://name.localhost:1355` arrive over
+IPv6, while Caddy and probes use `127.0.0.1`. With both loopbacks bound,
+internal services can keep using `name.localhost:1355` URLs directly — no
+`/etc/hosts` entries, no Host-header tricks required.
 
 Example Caddy configuration:
 

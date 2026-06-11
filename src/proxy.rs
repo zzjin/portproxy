@@ -37,10 +37,15 @@ type HttpClient = Client<HttpConnector, Incoming>;
 
 /// Run the proxy until it goes idle (no routes for `idle_delay` after `grace`).
 /// routes.json is the IPC: reloaded every 100 ms, dead-PID entries dropped.
-/// Takes a pre-bound listener so callers only persist state (pid files) after
-/// the bind has succeeded — a second racing proxy must fail before writing
-/// anything it would clean up on exit.
-pub async fn run_proxy(store: RouteStore, listener: TcpListener, opts: ProxyOptions) -> Result<()> {
+/// Takes pre-bound listeners (typically dual-stack loopback — `.localhost`
+/// resolves to `::1` while Caddy connects via `127.0.0.1`) so callers only
+/// persist state (pid files) after every bind has succeeded — a second racing
+/// proxy must fail before writing anything it would clean up on exit.
+pub async fn run_proxy(
+    store: RouteStore,
+    listeners: Vec<TcpListener>,
+    opts: ProxyOptions,
+) -> Result<()> {
     let routes: RouteMap = Default::default();
     let (tx, rx) = watch::channel(false);
 
@@ -58,27 +63,40 @@ pub async fn run_proxy(store: RouteStore, listener: TcpListener, opts: ProxyOpti
 
     let client: HttpClient = Client::builder(TokioExecutor::new()).build_http();
 
-    let accept_loop = async {
-        loop {
-            let (stream, peer) = listener.accept().await?;
+    let accept_all = async {
+        let mut set = tokio::task::JoinSet::new();
+        for listener in listeners {
             let routes = routes.clone();
             let client = client.clone();
-            tokio::spawn(async move {
-                let svc = hyper::service::service_fn(move |req| {
-                    handle(req, routes.clone(), client.clone(), peer)
-                });
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), svc)
-                    .with_upgrades()
-                    .await;
+            set.spawn(async move {
+                loop {
+                    let (stream, peer) = listener.accept().await?;
+                    let routes = routes.clone();
+                    let client = client.clone();
+                    tokio::spawn(async move {
+                        let svc = hyper::service::service_fn(move |req| {
+                            handle(req, routes.clone(), client.clone(), peer)
+                        });
+                        let _ = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(TokioIo::new(stream), svc)
+                            .with_upgrades()
+                            .await;
+                    });
+                }
+                #[allow(unreachable_code)]
+                anyhow::Ok(())
             });
         }
-        #[allow(unreachable_code)]
-        anyhow::Ok(())
+        // any accept loop terminating is fatal
+        match set.join_next().await {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => Err(anyhow::anyhow!(e)),
+            None => anyhow::Ok(()),
+        }
     };
 
     tokio::select! {
-        r = accept_loop => r,
+        r = accept_all => r,
         _ = idle_watch(rx, opts.grace, opts.idle_delay) => Ok(()),
     }
 }

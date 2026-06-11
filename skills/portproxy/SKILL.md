@@ -83,8 +83,11 @@ or majority npm scope). Git linked worktrees append the branch's last segment:
   build-command auto-detection); absent — auto
 - `apps` — per-package overrides at a workspace root, keyed by relative path
 
-Global `~/.portproxy/config.toml`: `listen` (proxy address), `base_domain` +
-`scheme` (URL printing only).
+Global `~/.portproxy/config.toml`: `listen` (proxy address — string or array;
+default dual-stack loopback `["127.0.0.1:1355", "[::1]:1355"]` so server-side
+`http://name.localhost:1355` requests, which resolve to `::1` per RFC 6761,
+work alongside Caddy's `127.0.0.1`), `base_domain` + `scheme` (URL printing
+only).
 
 ## Environment Variables
 

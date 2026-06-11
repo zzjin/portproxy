@@ -65,7 +65,7 @@ async fn spawn_proxy(routes: Vec<Route>, grace: Duration, idle: Duration) -> Tes
         idle_delay: idle,
     };
     let handle = tokio::spawn(async move {
-        run_proxy(store, listener, opts).await.unwrap();
+        run_proxy(store, vec![listener], opts).await.unwrap();
     });
     // wait until accepting
     for _ in 0..50 {
@@ -204,6 +204,42 @@ async fn dead_backend_502() {
     let (status, _, _) = request(p.addr, "app.x", &[]).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     p.handle.abort();
+}
+
+#[tokio::test]
+async fn dual_stack_listeners_both_route() {
+    let backend = spawn_backend().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("routes.json"),
+        serde_json::to_string(&vec![route("app", backend.port())]).unwrap(),
+    )
+    .unwrap();
+    let l4 = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let l6 = TcpListener::bind("[::1]:0").await.unwrap();
+    let a4 = l4.local_addr().unwrap();
+    let a6 = l6.local_addr().unwrap();
+    let store = RouteStore::new(dir.path().to_path_buf());
+    let handle = tokio::spawn(async move {
+        run_proxy(
+            store,
+            vec![l4, l6],
+            ProxyOptions {
+                grace: Duration::from_secs(60),
+                idle_delay: Duration::from_secs(60),
+            },
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // IPv4 path (Caddy) and IPv6 path (.localhost -> ::1) both reach the route
+    let (s4, _, _) = request(a4, "app.localhost", &[]).await;
+    assert_eq!(s4, StatusCode::OK);
+    let (s6, _, _) = request(a6, "app.localhost", &[]).await;
+    assert_eq!(s6, StatusCode::OK);
+    handle.abort();
 }
 
 #[tokio::test]

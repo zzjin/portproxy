@@ -4,18 +4,40 @@ use std::path::Path;
 /// Global config at `<state_dir>/config.toml`. All fields optional.
 /// `base_domain`/`scheme` are only used to print URLs (`get`/`list`/run banner);
 /// the proxy itself is domain-agnostic.
-#[derive(Debug, Deserialize)]
-#[serde(default)]
+///
+/// `listen` accepts a single address or a list. The default is dual-stack
+/// loopback: `.localhost` resolves to `::1` (RFC 6761) while Caddy and probes
+/// typically use `127.0.0.1` — an IPv4-only listener silently breaks the
+/// former.
+#[derive(Debug)]
 pub struct GlobalConfig {
-    pub listen: String,
+    pub listen: Vec<String>,
     pub base_domain: Option<String>,
     pub scheme: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawGlobalConfig {
+    listen: Option<OneOrMany>,
+    base_domain: Option<String>,
+    scheme: Option<String>,
 }
 
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            listen: crate::utils::DEFAULT_LISTEN.into(),
+            listen: crate::utils::DEFAULT_LISTEN
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             base_domain: None,
             scheme: "https".into(),
         }
@@ -24,14 +46,30 @@ impl Default for GlobalConfig {
 
 impl GlobalConfig {
     pub fn load(state_dir: &Path) -> Self {
-        let mut cfg: GlobalConfig = std::fs::read_to_string(state_dir.join("config.toml"))
+        let raw: RawGlobalConfig = std::fs::read_to_string(state_dir.join("config.toml"))
             .ok()
             .and_then(|s| toml::from_str(&s).ok())
             .unwrap_or_default();
-        // env beats config file
+        let mut cfg = GlobalConfig::default();
+        match raw.listen {
+            Some(OneOrMany::One(l)) if !l.is_empty() => cfg.listen = vec![l],
+            Some(OneOrMany::Many(ls)) if !ls.is_empty() => cfg.listen = ls,
+            _ => {}
+        }
+        cfg.base_domain = raw.base_domain;
+        if let Some(s) = raw.scheme {
+            cfg.scheme = s;
+        }
+        // env beats config file; comma-separated for multiple addresses
         if let Ok(l) = std::env::var("PORTPROXY_LISTEN") {
-            if !l.is_empty() {
-                cfg.listen = l;
+            let addrs: Vec<String> = l
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            if !addrs.is_empty() {
+                cfg.listen = addrs;
             }
         }
         cfg
@@ -106,9 +144,27 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         let d = tempdir().unwrap();
         let c = GlobalConfig::load(d.path());
-        assert_eq!(c.listen, "127.0.0.1:1355");
+        // dual-stack loopback: .localhost resolves to ::1 per RFC 6761
+        assert_eq!(c.listen, vec!["127.0.0.1:1355", "[::1]:1355"]);
         assert_eq!(c.scheme, "https");
         assert!(c.url_for("app").is_none());
+    }
+
+    #[test]
+    fn listen_accepts_string_or_array() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let d = tempdir().unwrap();
+        std::fs::write(d.path().join("config.toml"), "listen = \"[::]:1355\"").unwrap();
+        assert_eq!(GlobalConfig::load(d.path()).listen, vec!["[::]:1355"]);
+        std::fs::write(
+            d.path().join("config.toml"),
+            "listen = [\"0.0.0.0:1355\", \"[::]:1355\"]",
+        )
+        .unwrap();
+        assert_eq!(
+            GlobalConfig::load(d.path()).listen,
+            vec!["0.0.0.0:1355", "[::]:1355"]
+        );
     }
 
     #[test]
@@ -157,10 +213,10 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         let d = tempdir().unwrap();
         std::fs::write(d.path().join("config.toml"), "listen = \"127.0.0.1:9999\"").unwrap();
-        std::env::set_var("PORTPROXY_LISTEN", "0.0.0.0:7777");
+        std::env::set_var("PORTPROXY_LISTEN", "0.0.0.0:7777, [::1]:7777");
         let c = GlobalConfig::load(d.path());
         std::env::remove_var("PORTPROXY_LISTEN");
-        assert_eq!(c.listen, "0.0.0.0:7777");
+        assert_eq!(c.listen, vec!["0.0.0.0:7777", "[::1]:7777"]);
     }
 
     #[test]
@@ -173,7 +229,7 @@ mod tests {
         )
         .unwrap();
         let c = GlobalConfig::load(d.path());
-        assert_eq!(c.listen, "0.0.0.0:1355");
+        assert_eq!(c.listen, vec!["0.0.0.0:1355"]);
         assert_eq!(
             c.url_for("sample-web").as_deref(),
             Some("https://sample-web.dev.example.test")

@@ -494,7 +494,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 }
 
 async fn ensure_proxy(state: &Path, cfg: &GlobalConfig) -> Result<()> {
-    if utils::is_proxy_running(&cfg.listen) {
+    if utils::is_any_proxy_running(&cfg.listen) {
         return Ok(());
     }
     std::fs::create_dir_all(state)?;
@@ -504,10 +504,16 @@ async fn ensure_proxy(state: &Path, cfg: &GlobalConfig) -> Result<()> {
         .open(state.join("proxy.log"))?;
     let exe = std::env::current_exe()?;
     let mut c = std::process::Command::new(exe);
-    c.args(["proxy", "start", "--foreground", "--listen", &cfg.listen])
-        .stdin(std::process::Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log);
+    c.args([
+        "proxy",
+        "start",
+        "--foreground",
+        "--listen",
+        &cfg.listen.join(","),
+    ])
+    .stdin(std::process::Stdio::null())
+    .stdout(log.try_clone()?)
+    .stderr(log);
     unsafe {
         use std::os::unix::process::CommandExt;
         c.pre_exec(|| {
@@ -518,7 +524,7 @@ async fn ensure_proxy(state: &Path, cfg: &GlobalConfig) -> Result<()> {
     c.spawn()?;
     for _ in 0..20 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        if utils::is_proxy_running(&cfg.listen) {
+        if utils::is_any_proxy_running(&cfg.listen) {
             return Ok(());
         }
     }
@@ -549,33 +555,52 @@ async fn cmd_proxy(args: &[String]) -> Result<i32> {
     let cfg = GlobalConfig::load(&state);
     match args.first().map(String::as_str) {
         Some("start") => {
-            let listen = args
+            // -l/--listen takes comma-separated addresses
+            let listen: Vec<String> = args
                 .iter()
                 .position(|a| a == "--listen" || a == "-l")
-                .and_then(|i| args.get(i + 1).cloned())
+                .and_then(|i| args.get(i + 1))
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
                 .unwrap_or_else(|| cfg.listen.clone());
+            if listen.is_empty() {
+                bail!("no listen address given");
+            }
             if args.iter().any(|a| a == "--foreground") {
-                let addr: std::net::SocketAddr = listen
-                    .parse()
-                    .with_context(|| format!("invalid listen address {listen:?}"))?;
-                // bind BEFORE writing pid files: a second racing proxy must
-                // die here without ever touching (and later deleting) the
-                // healthy proxy's state files
-                let listener = tokio::net::TcpListener::bind(addr)
-                    .await
-                    .with_context(|| format!("failed to bind {addr}"))?;
+                // bind ALL addresses BEFORE writing pid files: a second racing
+                // proxy must die here without ever touching (and later
+                // deleting) the healthy proxy's state files
+                let mut listeners = Vec::new();
+                let mut first_port = 0u16;
+                for l in &listen {
+                    let addr: std::net::SocketAddr = l
+                        .parse()
+                        .with_context(|| format!("invalid listen address {l:?}"))?;
+                    let listener = tokio::net::TcpListener::bind(addr)
+                        .await
+                        .with_context(|| format!("failed to bind {addr}"))?;
+                    if first_port == 0 {
+                        first_port = addr.port();
+                    }
+                    listeners.push(listener);
+                }
                 std::fs::create_dir_all(&state)?;
                 std::fs::write(state.join("proxy.pid"), std::process::id().to_string())?;
-                std::fs::write(state.join("proxy.port"), addr.port().to_string())?;
+                std::fs::write(state.join("proxy.port"), first_port.to_string())?;
                 let store = RouteStore::new(state.clone());
-                eprintln!("portproxy proxy listening on {addr}");
+                eprintln!("portproxy proxy listening on {}", listen.join(", "));
 
                 let result = {
                     use tokio::signal::unix::{signal, SignalKind};
                     let mut sigterm = signal(SignalKind::terminate())?;
                     let mut sigint = signal(SignalKind::interrupt())?;
                     tokio::select! {
-                        r = proxy::run_proxy(store, listener, proxy::ProxyOptions::default()) => r,
+                        r = proxy::run_proxy(store, listeners, proxy::ProxyOptions::default()) => r,
                         _ = sigterm.recv() => Ok(()),
                         _ = sigint.recv() => Ok(()),
                     }
@@ -588,7 +613,7 @@ async fn cmd_proxy(args: &[String]) -> Result<i32> {
             } else {
                 let cfg = GlobalConfig { listen, ..cfg };
                 ensure_proxy(&state, &cfg).await?;
-                println!("proxy running on {}", cfg.listen);
+                println!("proxy running on {}", cfg.listen.join(", "));
                 Ok(0)
             }
         }

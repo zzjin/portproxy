@@ -145,14 +145,23 @@ VITE_API_PROXY_TARGET=$API_URL portproxy run --name sample-web pnpm dev:web
 `~/.portproxy/config.toml` (all optional):
 
 ```toml
-listen = "127.0.0.1:1355"        # proxy listen address
-base_domain = "dev.example.test"   # only used to print URLs (get/list/banner)
+# default: dual-stack loopback (string or array accepted)
+listen = ["127.0.0.1:1355", "[::1]:1355"]
+base_domain = "dev.example.test" # only used to print URLs (get/list/banner)
 scheme = "https"                 # only used to print URLs
 ```
 
+The dual-stack default matters for **server-side `.localhost` requests**:
+`*.localhost` resolves to `::1` (RFC 6761, e.g. via systemd-resolved), so an
+internal fetch to `http://example-api.localhost:1355` arrives over IPv6 — an
+IPv4-only listener silently refuses it, while Caddy and health probes connect
+via `127.0.0.1`. With the default, both paths work and no `/etc/hosts`
+entries are needed.
+
 If Caddy runs in Docker without host networking, set `listen` to an address
-the container can reach (e.g. the docker bridge gateway `172.17.0.1:1355` or
-`0.0.0.0:1355` + firewall).
+the container can reach — `"[::]:1355"` covers all interfaces on both stacks
+(IPv4 arrives via mapped addresses), or use the docker bridge gateway
+`"172.17.0.1:1355"`.
 
 Per-project config — `portproxy.json` in the project directory, or the
 package.json `"portproxy"` key (string shorthand sets the name):

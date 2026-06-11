@@ -1,7 +1,9 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-pub const DEFAULT_LISTEN: &str = "127.0.0.1:1355";
+/// Dual-stack loopback by default: `.localhost` resolves to `::1` per
+/// RFC 6761, while Caddy/probes typically connect via `127.0.0.1`.
+pub const DEFAULT_LISTEN: &[&str] = &["127.0.0.1:1355", "[::1]:1355"];
 pub const MIN_APP_PORT: u16 = 4000;
 pub const MAX_APP_PORT: u16 = 4999;
 pub const MAX_HOPS: u32 = 5;
@@ -80,6 +82,11 @@ pub fn is_proxy_running(listen: &str) -> bool {
     let mut buf = String::new();
     let _ = s.read_to_string(&mut buf);
     buf.to_lowercase().contains("x-portproxy: 1")
+}
+
+/// True when any of the listen addresses answers as a live portproxy.
+pub fn is_any_proxy_running(addrs: &[String]) -> bool {
+    addrs.iter().any(|a| is_proxy_running(a))
 }
 
 pub fn pid_alive(pid: u32) -> bool {
