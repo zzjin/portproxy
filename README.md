@@ -70,7 +70,7 @@ cd ~/code/sample-web && portproxy run pnpm dev
 # portproxy: sample-web -> 127.0.0.1:4123  (https://sample-web.dev.example.test)
 
 portproxy api cargo run            # explicit name "api"
-portproxy alias dashboard 3000       # route a Docker container
+portproxy alias dashboard 3000       # route a local dashboard
 PORTPROXY=0 pnpm dev               # bypass portproxy entirely
 ```
 
@@ -207,7 +207,7 @@ Environment: `PORTPROXY_STATE_DIR` (state location, default `~/.portproxy`),
 
 ```nginx
 server {
-    server_name ~^.+\.ubl6\.zzjin\.net$;
+    server_name ~^.+\.dev\.example\.test$;
     location / {
         proxy_pass http://127.0.0.1:1355;
         proxy_set_header Host $host;
