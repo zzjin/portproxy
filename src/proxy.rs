@@ -380,6 +380,8 @@ fn related_routes<'a>(
     (suggested, same_worktree, others)
 }
 
+const ARROW_SVG: &str = r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6.5 3.5L11 8l-4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+
 fn route_items(scheme: &str, host: &str, routes: &[&Route]) -> String {
     routes
         .iter()
@@ -387,39 +389,34 @@ fn route_items(scheme: &str, host: &str, routes: &[&Route]) -> String {
             let name = html_escape(&r.hostname);
             let url = html_escape(&sibling_url(scheme, host, &r.hostname));
             format!(
-                "<li><a href=\"{url}\">{name}</a> <span class=port>127.0.0.1:{}</span></li>",
+                "<li><a href=\"{url}\" class=\"card-link\"><span class=\"name\">{name}</span><span class=\"meta\"><code class=\"port\">127.0.0.1:{}</code><span class=\"arrow\">{ARROW_SVG}</span></span></a></li>",
                 r.port
             )
         })
         .collect()
 }
 
+fn section(label: &str, scheme: &str, host: &str, routes: &[&Route]) -> String {
+    format!(
+        "<div class=\"section\"><p class=\"label\">{label}</p><ul class=\"card\">{}</ul></div>",
+        route_items(scheme, host, routes)
+    )
+}
+
 fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> String {
     let list: String = if active.is_empty() {
-        "<p class=empty><em>No apps running.</em></p>".to_string()
+        "<p class=\"empty\">No apps running.</p>".to_string()
     } else {
         let (suggested, same_wt, others) = related_routes(label, active);
         if suggested.is_empty() {
-            format!(
-                "<p>Active apps:</p>\n<ul>{}</ul>",
-                route_items(scheme, host, &others)
-            )
+            section("Active apps", scheme, host, &others)
         } else {
-            let mut s = format!(
-                "<p>Did you mean:</p>\n<ul>{}</ul>",
-                route_items(scheme, host, &suggested)
-            );
+            let mut s = section("Did you mean", scheme, host, &suggested);
             if !same_wt.is_empty() {
-                s.push_str(&format!(
-                    "\n<p>Same worktree:</p>\n<ul>{}</ul>",
-                    route_items(scheme, host, &same_wt)
-                ));
+                s.push_str(&section("Same worktree", scheme, host, &same_wt));
             }
             if !others.is_empty() {
-                s.push_str(&format!(
-                    "\n<p>Other running apps:</p>\n<ul>{}</ul>",
-                    route_items(scheme, host, &others)
-                ));
+                s.push_str(&section("Other running apps", scheme, host, &others));
             }
             s
         }
@@ -427,33 +424,188 @@ fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> St
     let label = html_escape(label);
     format!(
         r#"<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>portproxy &mdash; not found</title>
+<meta name="color-scheme" content="light dark">
+<title>404 &mdash; portproxy</title>
 <style>
-  body {{ font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto;
-         padding: 0 1rem; line-height: 1.6; color: #1a1a1a; background: #fff; }}
-  h1 {{ font-size: 1.4rem; }}
-  code {{ background: rgba(127,127,127,.15); padding: .15em .4em; border-radius: 4px; }}
-  ul {{ padding-left: 1.2rem; }}
-  li {{ margin: .3rem 0; }}
-  a {{ color: #0070f3; text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
-  .port {{ color: #888; font-size: .85em; margin-left: .5em; }}
-  .hint {{ color: #666; margin-top: 2rem; font-size: .9em; }}
+  *, *::before, *::after {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  :root {{
+    --bg: #fff;
+    --fg: #171717;
+    --border: #eaeaea;
+    --surface: #fafafa;
+    --text-2: #666;
+    --text-3: #a1a1a1;
+    --accent: #0070f3;
+    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  }}
   @media (prefers-color-scheme: dark) {{
-    body {{ color: #ededed; background: #111; }}
-    a {{ color: #52a8ff; }}
+    :root {{
+      --bg: #000;
+      --fg: #ededed;
+      --border: rgba(255,255,255,0.12);
+      --surface: #111;
+      --text-2: #888;
+      --text-3: #666;
+      --accent: #3291ff;
+    }}
+  }}
+  html {{ height: 100%; }}
+  body {{
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+  }}
+  .page {{
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+  }}
+  .hero {{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }}
+  .hero h1 {{
+    font-family: var(--font-mono);
+    font-size: clamp(72px, 14vw, 128px);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }}
+  .hero h2 {{
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-3);
+    margin-top: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }}
+  .content {{
+    margin-top: 48px;
+    width: 100%;
+    max-width: 480px;
+  }}
+  .desc {{
+    font-size: 14px;
+    color: var(--text-2);
+    text-align: center;
+    line-height: 1.7;
+  }}
+  .desc code {{
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+  }}
+  .section {{ margin-top: 32px; }}
+  .label {{
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 10px;
+  }}
+  .card {{
+    list-style: none;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }}
+  .card > li {{ border-bottom: 1px solid var(--border); }}
+  .card > li:last-child {{ border-bottom: none; }}
+  .card-link {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 16px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s ease;
+  }}
+  .card-link:hover {{ background: var(--surface); }}
+  .card-link .name {{
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.15s ease;
+    overflow-wrap: anywhere;
+  }}
+  .card-link:hover .name {{ color: var(--accent); }}
+  .card-link .meta {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    margin-left: 16px;
+  }}
+  .card-link .port {{
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-3);
+  }}
+  .card-link .arrow {{
+    color: var(--text-3);
+    display: flex;
+    transition: transform 0.2s ease, color 0.2s ease;
+  }}
+  .card-link:hover .arrow {{
+    transform: translateX(2px);
+    color: var(--text-2);
+  }}
+  .terminal {{
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 20px;
+    line-height: 1.8;
+    color: var(--fg);
+    overflow-x: auto;
+    white-space: nowrap;
+  }}
+  .terminal .prompt {{
+    color: var(--text-3);
+    user-select: none;
+  }}
+  .empty {{
+    font-size: 14px;
+    color: var(--text-3);
+    text-align: center;
+    padding: 32px 0;
+  }}
+  .footer {{
+    margin-top: 64px;
+    font-size: 11px;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    letter-spacing: 0.08em;
   }}
 </style>
 </head>
 <body>
-<h1>No app named <code>{label}</code></h1>
+<div class="page">
+<div class="hero"><h1>404</h1><h2>Not Found</h2></div>
+<div class="content">
+<p class="desc">No app named <code>{label}</code></p>
 {list}
-<p class=hint>Start one with: <code>portproxy {label} your-command</code>
-or <code>portproxy run your-command</code></p>
+<div class="section">
+<p class="label">Start one with</p>
+<div class="terminal"><span class="prompt">$ </span>portproxy {label} your-command<br><span class="prompt">$ </span>portproxy run your-command</div>
+</div>
+</div>
+<p class="footer">portproxy</p>
+</div>
 </body>
 </html>"#
     )
