@@ -338,25 +338,94 @@ fn sibling_url(scheme: &str, requested_host: &str, label: &str) -> String {
     }
 }
 
-fn not_found(label: &str, host: &str, scheme: &str, active: &[Route]) -> Response<Body> {
-    let label = html_escape(label);
+/// The `-…` extension `s` adds over `prefix`, if any.
+fn strip_dash_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    s.strip_prefix(prefix)?.strip_prefix('-')
+}
+
+/// Split active routes into (suggested, same_worktree, others).
+/// Suggested — prefix-related to the requested label. Forward: a running
+/// route extends the label with `-…` (a worktree variant of what was asked
+/// for). Reverse: the label extends a running route (stale worktree
+/// hostname; only the base runs).
+/// Same-worktree — siblings of a suggestion: the part the longer name adds
+/// over the shorter is the worktree suffix (`demo-web` + variant
+/// `demo-web-billing` -> `billing`), and any other route ending in
+/// `-billing` is the same worktree's service for another package.
+fn related_routes<'a>(
+    label: &str,
+    active: &'a [Route],
+) -> (Vec<&'a Route>, Vec<&'a Route>, Vec<&'a Route>) {
+    let mut suggested = Vec::new();
+    let mut rest = Vec::new();
+    let mut suffixes = Vec::new();
+    for r in active {
+        match strip_dash_prefix(&r.hostname, label)
+            .or_else(|| strip_dash_prefix(label, &r.hostname))
+        {
+            Some(sfx) => {
+                suggested.push(r);
+                suffixes.push(sfx);
+            }
+            None => rest.push(r),
+        }
+    }
+    let (same_worktree, others) = rest.into_iter().partition(|r: &&Route| {
+        suffixes.iter().any(|sfx| {
+            r.hostname
+                .strip_suffix(sfx)
+                .is_some_and(|p| p.ends_with('-'))
+        })
+    });
+    (suggested, same_worktree, others)
+}
+
+fn route_items(scheme: &str, host: &str, routes: &[&Route]) -> String {
+    routes
+        .iter()
+        .map(|r| {
+            let name = html_escape(&r.hostname);
+            let url = html_escape(&sibling_url(scheme, host, &r.hostname));
+            format!(
+                "<li><a href=\"{url}\">{name}</a> <span class=port>127.0.0.1:{}</span></li>",
+                r.port
+            )
+        })
+        .collect()
+}
+
+fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> String {
     let list: String = if active.is_empty() {
         "<p class=empty><em>No apps running.</em></p>".to_string()
     } else {
-        let items: String = active
-            .iter()
-            .map(|r| {
-                let name = html_escape(&r.hostname);
-                let url = html_escape(&sibling_url(scheme, host, &r.hostname));
-                format!(
-                    "<li><a href=\"{url}\">{name}</a> <span class=port>127.0.0.1:{}</span></li>",
-                    r.port
-                )
-            })
-            .collect();
-        format!("<ul>{items}</ul>")
+        let (suggested, same_wt, others) = related_routes(label, active);
+        if suggested.is_empty() {
+            format!(
+                "<p>Active apps:</p>\n<ul>{}</ul>",
+                route_items(scheme, host, &others)
+            )
+        } else {
+            let mut s = format!(
+                "<p>Did you mean:</p>\n<ul>{}</ul>",
+                route_items(scheme, host, &suggested)
+            );
+            if !same_wt.is_empty() {
+                s.push_str(&format!(
+                    "\n<p>Same worktree:</p>\n<ul>{}</ul>",
+                    route_items(scheme, host, &same_wt)
+                ));
+            }
+            if !others.is_empty() {
+                s.push_str(&format!(
+                    "\n<p>Other running apps:</p>\n<ul>{}</ul>",
+                    route_items(scheme, host, &others)
+                ));
+            }
+            s
+        }
     };
-    let html = format!(
+    let label = html_escape(label);
+    format!(
         r#"<!doctype html>
 <html>
 <head>
@@ -382,13 +451,16 @@ fn not_found(label: &str, host: &str, scheme: &str, active: &[Route]) -> Respons
 </head>
 <body>
 <h1>No app named <code>{label}</code></h1>
-<p>Active apps:</p>
 {list}
 <p class=hint>Start one with: <code>portproxy {label} your-command</code>
 or <code>portproxy run your-command</code></p>
 </body>
 </html>"#
-    );
+    )
+}
+
+fn not_found(label: &str, host: &str, scheme: &str, active: &[Route]) -> Response<Body> {
+    let html = not_found_html(label, host, scheme, active);
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("content-type", "text/html; charset=utf-8")
@@ -423,5 +495,92 @@ mod tests {
             html_escape(r#"<img src=x onerror="x">&"#),
             "&lt;img src=x onerror=&quot;x&quot;&gt;&amp;"
         );
+    }
+
+    fn route(hostname: &str) -> Route {
+        Route {
+            hostname: hostname.into(),
+            port: 4000,
+            pid: 1,
+        }
+    }
+
+    fn names<'a>(routes: &[&'a Route]) -> Vec<&'a str> {
+        routes.iter().map(|r| r.hostname.as_str()).collect()
+    }
+
+    #[test]
+    fn related_routes_finds_worktree_variants() {
+        let active = vec![
+            route("demo-web-billing"),
+            route("demo-webby"),
+            route("other-api"),
+        ];
+        let (suggested, same_wt, others) = related_routes("demo-web", &active);
+        assert_eq!(names(&suggested), ["demo-web-billing"]);
+        assert!(same_wt.is_empty());
+        assert_eq!(names(&others), ["demo-webby", "other-api"]);
+    }
+
+    #[test]
+    fn related_routes_groups_same_worktree_siblings() {
+        let active = vec![
+            route("demo-web-billing"),
+            route("demo-api-billing"),
+            route("demo-admin-billing"),
+            route("other-api-audit"),
+        ];
+        let (suggested, same_wt, others) = related_routes("demo-web", &active);
+        assert_eq!(names(&suggested), ["demo-web-billing"]);
+        assert_eq!(
+            names(&same_wt),
+            [
+                "demo-api-billing",
+                "demo-admin-billing"
+            ]
+        );
+        assert_eq!(names(&others), ["other-api-audit"]);
+    }
+
+    #[test]
+    fn related_routes_finds_base_for_stale_worktree_host() {
+        let active = vec![route("demo-web"), route("other-api")];
+        let (suggested, same_wt, others) = related_routes("demo-web-old-branch", &active);
+        assert_eq!(names(&suggested), ["demo-web"]);
+        assert!(same_wt.is_empty());
+        assert_eq!(names(&others), ["other-api"]);
+    }
+
+    #[test]
+    fn related_routes_empty_for_unrelated_label() {
+        let active = vec![route("demo-web"), route("other-api")];
+        let (suggested, same_wt, others) = related_routes("zzz", &active);
+        assert!(suggested.is_empty());
+        assert!(same_wt.is_empty());
+        assert_eq!(names(&others), ["demo-web", "other-api"]);
+    }
+
+    #[test]
+    fn not_found_html_sections_related_routes() {
+        let active = vec![
+            route("demo-web-billing"),
+            route("demo-api-billing"),
+            route("other-api"),
+        ];
+        let html = not_found_html("demo-web", "demo-web.localhost:1355", "http", &active);
+        assert!(html.contains("Did you mean"));
+        assert!(html.contains("http://demo-web-billing.localhost:1355"));
+        assert!(html.contains("Same worktree"));
+        assert!(html.contains("http://demo-api-billing.localhost:1355"));
+        assert!(html.contains("Other running apps"));
+        assert!(html.contains("other-api"));
+    }
+
+    #[test]
+    fn not_found_html_plain_list_when_nothing_related() {
+        let html = not_found_html("zzz", "zzz.localhost:1355", "http", &[route("demo-web")]);
+        assert!(html.contains("Active apps"));
+        assert!(html.contains("demo-web"));
+        assert!(!html.contains("Did you mean"));
     }
 }
