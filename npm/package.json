@@ -1,6 +1,6 @@
 {
   "name": "@zzjin/portproxy",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Stable named URLs for local dev servers behind a TLS-terminating reverse proxy",
   "license": "MIT",
   "repository": {
