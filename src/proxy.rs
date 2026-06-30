@@ -389,7 +389,7 @@ fn route_items(scheme: &str, host: &str, routes: &[&Route]) -> String {
             let name = html_escape(&r.hostname);
             let url = html_escape(&sibling_url(scheme, host, &r.hostname));
             format!(
-                "<li><a href=\"{url}\" class=\"card-link\"><span class=\"name\">{name}</span><span class=\"meta\"><code class=\"port\">127.0.0.1:{}</code><span class=\"arrow\">{ARROW_SVG}</span></span></a></li>",
+                "<li><a href=\"{url}\" class=\"card-link\"><span class=\"name\">{name}</span><span class=\"meta\"><code class=\"port\">:{}</code><span class=\"arrow\">{ARROW_SVG}</span></span></a></li>",
                 r.port
             )
         })
