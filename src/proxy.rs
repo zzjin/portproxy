@@ -380,6 +380,30 @@ fn related_routes<'a>(
     (suggested, same_worktree, others)
 }
 
+fn worktree_sort_parts<'a>(hostname: &'a str, hostnames: &'a [String]) -> (u8, &'a str, &'a str) {
+    let base = hostnames
+        .iter()
+        .filter(|candidate| candidate.as_str() != hostname)
+        .filter_map(|candidate| {
+            strip_dash_prefix(hostname, candidate.as_str()).map(|sfx| (candidate.as_str(), sfx))
+        })
+        .max_by_key(|(base, _)| base.len());
+
+    match base {
+        Some((base, sfx)) => (1, sfx, base),
+        None => (0, "", hostname),
+    }
+}
+
+fn sort_plain_active_apps(routes: &mut [&Route]) {
+    let hostnames: Vec<String> = routes.iter().map(|r| r.hostname.clone()).collect();
+    routes.sort_by(|a, b| {
+        let ak = worktree_sort_parts(&a.hostname, &hostnames);
+        let bk = worktree_sort_parts(&b.hostname, &hostnames);
+        ak.cmp(&bk).then_with(|| a.hostname.cmp(&b.hostname))
+    });
+}
+
 const ARROW_SVG: &str = r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6.5 3.5L11 8l-4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
 
 fn route_items(scheme: &str, host: &str, routes: &[&Route]) -> String {
@@ -407,8 +431,9 @@ fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> St
     let list: String = if active.is_empty() {
         "<p class=\"empty\">No apps running.</p>".to_string()
     } else {
-        let (suggested, same_wt, others) = related_routes(label, active);
+        let (suggested, same_wt, mut others) = related_routes(label, active);
         if suggested.is_empty() {
+            sort_plain_active_apps(&mut others);
             section("Active apps", scheme, host, &others)
         } else {
             let mut s = section("Did you mean", scheme, host, &suggested);
@@ -690,13 +715,7 @@ mod tests {
         ];
         let (suggested, same_wt, others) = related_routes("demo-web", &active);
         assert_eq!(names(&suggested), ["demo-web-billing"]);
-        assert_eq!(
-            names(&same_wt),
-            [
-                "demo-api-billing",
-                "demo-admin-billing"
-            ]
-        );
+        assert_eq!(names(&same_wt), ["demo-api-billing", "demo-admin-billing"]);
         assert_eq!(names(&others), ["other-api-audit"]);
     }
 
@@ -716,6 +735,54 @@ mod tests {
         assert!(suggested.is_empty());
         assert!(same_wt.is_empty());
         assert_eq!(names(&others), ["demo-web", "other-api"]);
+    }
+
+    #[test]
+    fn sort_plain_active_apps_groups_worktree_variants_after_base_apps() {
+        let active = vec![
+            route("demo-api"),
+            route("demo-api-feature-x"),
+            route("demo-admin"),
+            route("demo-admin-feature-x"),
+            route("demo-web"),
+            route("demo-web-feature-x"),
+        ];
+        let mut routes: Vec<&Route> = active.iter().collect();
+
+        sort_plain_active_apps(&mut routes);
+
+        assert_eq!(
+            names(&routes),
+            [
+                "demo-admin",
+                "demo-api",
+                "demo-web",
+                "demo-admin-feature-x",
+                "demo-api-feature-x",
+                "demo-web-feature-x",
+            ]
+        );
+    }
+
+    #[test]
+    fn sort_plain_active_apps_keeps_hostname_order_without_base_anchor() {
+        let active = vec![
+            route("demo-web-feature-x"),
+            route("demo-api-feature-x"),
+            route("demo-admin-feature-x"),
+        ];
+        let mut routes: Vec<&Route> = active.iter().collect();
+
+        sort_plain_active_apps(&mut routes);
+
+        assert_eq!(
+            names(&routes),
+            [
+                "demo-admin-feature-x",
+                "demo-api-feature-x",
+                "demo-web-feature-x",
+            ]
+        );
     }
 
     #[test]
