@@ -591,6 +591,12 @@ fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> St
     font-family: var(--font-mono);
     letter-spacing: 0.08em;
   }}
+  .footer a {{
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }}
+  .footer a:hover {{ color: var(--accent); }}
 </style>
 </head>
 <body>
@@ -604,7 +610,7 @@ fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> St
 <div class="terminal"><span class="prompt">$ </span>portproxy {label} your-command<br><span class="prompt">$ </span>portproxy run your-command</div>
 </div>
 </div>
-<p class="footer">portproxy</p>
+<p class="footer"><a href="https://github.com/zzjin/portproxy" rel="noreferrer">portproxy</a></p>
 </div>
 </body>
 </html>"#

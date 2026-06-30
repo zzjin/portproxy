@@ -172,6 +172,10 @@ async fn unknown_label_404_lists_routes() {
         body.contains("href=\"https://app.dev.example.test\""),
         "{body}"
     );
+    assert!(
+        body.contains("href=\"https://github.com/zzjin/portproxy\""),
+        "{body}"
+    );
     p.handle.abort();
 }
 
