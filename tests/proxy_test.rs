@@ -176,6 +176,10 @@ async fn unknown_label_404_lists_routes() {
         body.contains("href=\"https://github.com/zzjin/portproxy\""),
         "{body}"
     );
+    assert!(
+        body.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
+        "{body}"
+    );
     p.handle.abort();
 }
 

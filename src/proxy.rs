@@ -420,6 +420,8 @@ fn route_items(scheme: &str, host: &str, routes: &[&Route]) -> String {
         .collect()
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn section(label: &str, scheme: &str, host: &str, routes: &[&Route]) -> String {
     format!(
         "<div class=\"section\"><p class=\"label\">{label}</p><ul class=\"card\">{}</ul></div>",
@@ -635,7 +637,7 @@ fn not_found_html(label: &str, host: &str, scheme: &str, active: &[Route]) -> St
 <div class="terminal"><span class="prompt">$ </span>portproxy {label} your-command<br><span class="prompt">$ </span>portproxy run your-command</div>
 </div>
 </div>
-<p class="footer"><a href="https://github.com/zzjin/portproxy" rel="noreferrer">portproxy</a></p>
+<p class="footer"><a href="https://github.com/zzjin/portproxy" rel="noreferrer">portproxy</a> v{VERSION}</p>
 </div>
 </body>
 </html>"#
