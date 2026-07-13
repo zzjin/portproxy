@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn sort_plain_active_apps_groups_worktree_variants_after_base_apps() {
-        let active = vec![
+        let active = [
             route("demo-api"),
             route("demo-api-feature-x"),
             route("demo-admin"),
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn sort_plain_active_apps_keeps_hostname_order_without_base_anchor() {
-        let active = vec![
+        let active = [
             route("demo-web-feature-x"),
             route("demo-api-feature-x"),
             route("demo-admin-feature-x"),

@@ -494,17 +494,83 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
         .unwrap_or_else(|| 128 + status.signal().unwrap_or(1))
 }
 
+struct ProxyStartLock {
+    file: std::fs::File,
+}
+
+impl Drop for ProxyStartLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+/// Serialize proxy startup for wrappers sharing a state directory. The socket
+/// bind remains the final arbiter for callers using different state dirs, but
+/// the common monorepo case no longer spawns a burst of doomed competitors.
+async fn acquire_proxy_start_lock(state: &Path) -> Result<ProxyStartLock> {
+    use std::os::fd::AsRawFd;
+
+    let path = state.join("proxy.start.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("failed to open proxy start lock at {}", path.display()))?;
+    let started = tokio::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(8);
+
+    loop {
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            return Ok(ProxyStartLock { file });
+        }
+
+        let error = std::io::Error::last_os_error();
+        match error.kind() {
+            std::io::ErrorKind::WouldBlock => {
+                if started.elapsed() >= timeout {
+                    bail!(
+                        "timed out waiting for proxy start lock at {}",
+                        path.display()
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            std::io::ErrorKind::Interrupted => continue,
+            _ => return Err(error).context("failed to lock proxy startup"),
+        }
+    }
+}
+
+fn reap_proxy_child(mut child: tokio::process::Child) {
+    // Dropping a JoinHandle detaches the task; the task itself stays alive on
+    // this runtime and owns Child until wait() has collected its exit status.
+    drop(tokio::spawn(async move {
+        let _ = child.wait().await;
+    }));
+}
+
 async fn ensure_proxy(state: &Path, cfg: &GlobalConfig) -> Result<()> {
     if utils::is_any_proxy_running(&cfg.listen) {
         return Ok(());
     }
     std::fs::create_dir_all(state)?;
+    let _start_lock = acquire_proxy_start_lock(state).await?;
+    // Another wrapper may have completed startup while this one waited.
+    if utils::is_any_proxy_running(&cfg.listen) {
+        return Ok(());
+    }
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(state.join("proxy.log"))?;
     let exe = std::env::current_exe()?;
-    let mut c = std::process::Command::new(exe);
+    let mut c = tokio::process::Command::new(exe);
     c.args([
         "proxy",
         "start",
@@ -516,13 +582,13 @@ async fn ensure_proxy(state: &Path, cfg: &GlobalConfig) -> Result<()> {
     .stdout(log.try_clone()?)
     .stderr(log);
     unsafe {
-        use std::os::unix::process::CommandExt;
         c.pre_exec(|| {
             libc::setsid();
             Ok(())
         });
     }
-    c.spawn()?;
+    let child = c.spawn()?;
+    reap_proxy_child(child);
     for _ in 0..20 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         if utils::is_any_proxy_running(&cfg.listen) {
