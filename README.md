@@ -197,11 +197,58 @@ Environment: `PORTPROXY_STATE_DIR` (state location, default `~/.portproxy`),
 
 ### Caddy
 
+The usual reverse-proxy form keeps portproxy's existing behavior: the app sees
+`Host: localhost:<app-port>`, while the public host remains available as
+`X-Forwarded-Host`.
+
 ```caddyfile
 *.dev.example.test {
     reverse_proxy host.docker.internal:1355   # or 172.17.0.1:1355
 }
 ```
+
+For an app which must receive its public authority as `Host` (for example,
+frameworks which generate tenant-aware redirects), configure that authority as
+the reverse-proxy upstream and send the HTTP request through portproxy as a
+forward proxy:
+
+```caddyfile
+app.dev.example.test {
+    reverse_proxy http://app.dev.example.test {
+        transport http {
+            network_proxy url http://host.docker.internal:1355
+        }
+    }
+}
+```
+
+Caddy's HTTP transport sends an absolute-form request to the configured
+`network_proxy`. portproxy routes only by the first label of that URI authority,
+dials the registered loopback app port, converts the target back to origin form,
+and gives the app `Host: app.dev.example.test`. An explicit public authority port
+is preserved in `Host`, but never controls the connection port. This is not a
+general forward proxy: only live portproxy route labels are reachable, `CONNECT`
+and non-HTTP targets are rejected, and no public authority is resolved by
+portproxy.
+
+Use ordinary `reverse_proxy` for normalized Host and `network_proxy url` for
+preserved Host. Both forms support request bodies, streaming responses, and
+WebSocket upgrades against the same route without route/config schema changes.
+
+For a wildcard deployment where the public hostname selects the mode, keep the
+route name as the first label and put `origin` in a separate DNS level:
+
+```text
+NAME.dev.example.com                 -> normalized Host
+NAME.origin.dev.example.com          -> preserved Host
+```
+
+Caddy can manage both `*.dev.example.com` and
+`*.origin.dev.example.com` certificates through the configured DNS challenge.
+The preserved-Host handler must appear before the ordinary wildcard handler and
+uses a dynamic network address such as `{host}:54699`; Caddy does not allow
+runtime placeholders in an upstream URL containing a scheme. See the complete,
+tested configuration in [Caddy Integration](docs/CADDY.md).
 
 ### Nginx
 

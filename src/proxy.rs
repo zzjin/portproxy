@@ -4,7 +4,7 @@ use crate::utils::{host_label, MAX_HOPS};
 use anyhow::Result;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::{Bytes, Incoming};
-use hyper::{Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode, Uri};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -34,6 +34,71 @@ impl Default for ProxyOptions {
 type RouteMap = Arc<tokio::sync::RwLock<HashMap<String, Route>>>;
 type Body = BoxBody<Bytes, hyper::Error>;
 type HttpClient = Client<HttpConnector, Incoming>;
+
+#[derive(Debug, PartialEq)]
+enum RequestMode {
+    Ordinary,
+    Absolute,
+}
+
+#[derive(Debug)]
+struct RequestTarget {
+    mode: RequestMode,
+    authority: String,
+    origin_form: String,
+}
+
+fn classify_request(req: &Request<Incoming>) -> Result<RequestTarget, &'static str> {
+    if req.method() == Method::CONNECT {
+        return Err("CONNECT is not supported");
+    }
+
+    let uri = req.uri();
+    if let Some(scheme) = uri.scheme_str() {
+        if !scheme.eq_ignore_ascii_case("http") {
+            return Err("absolute request target must use http");
+        }
+        let authority = uri
+            .authority()
+            .ok_or("absolute request target is missing an authority")?
+            .as_str()
+            .to_string();
+        if host_label(&authority).is_none() {
+            return Err("absolute request target has an invalid authority");
+        }
+        return Ok(RequestTarget {
+            mode: RequestMode::Absolute,
+            authority,
+            origin_form: uri
+                .path_and_query()
+                .map(|value| value.as_str().to_string())
+                .unwrap_or_else(|| "/".into()),
+        });
+    }
+
+    if uri.authority().is_some() {
+        return Err("invalid request target");
+    }
+    let authority = req
+        .headers()
+        .get(hyper::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| host_label(value).is_some())
+        .ok_or("missing or invalid Host header")?
+        .to_string();
+    let origin_form = if uri.path() == "*" {
+        "*".into()
+    } else {
+        uri.path_and_query()
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_else(|| "/".into())
+    };
+    Ok(RequestTarget {
+        mode: RequestMode::Ordinary,
+        authority,
+        origin_form,
+    })
+}
 
 /// Run the proxy until it goes idle (no routes for `idle_delay` after `grace`).
 /// routes.json is the IPC: reloaded every 100 ms, dead-PID entries dropped.
@@ -139,15 +204,14 @@ async fn handle(
         return Ok(stamp(text(StatusCode::LOOP_DETECTED, "loop detected")));
     }
 
-    let host = req
-        .headers()
-        .get(hyper::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let Some(label) = host_label(&host) else {
-        return Ok(stamp(text(StatusCode::BAD_REQUEST, "missing Host header")));
+    let target = match classify_request(&req) {
+        Ok(target) => target,
+        Err(message) if req.method() == Method::CONNECT => {
+            return Ok(stamp(text(StatusCode::METHOD_NOT_ALLOWED, message)));
+        }
+        Err(message) => return Ok(stamp(text(StatusCode::BAD_REQUEST, message))),
     };
+    let label = host_label(&target.authority).expect("classified authority has a host label");
     let route = routes.read().await.get(&label).cloned();
     let Some(route) = route else {
         let mut active: Vec<Route> = routes.read().await.values().cloned().collect();
@@ -158,7 +222,12 @@ async fn handle(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("http")
             .to_string();
-        return Ok(stamp(not_found(&label, &host, &scheme, &active)));
+        return Ok(stamp(not_found(
+            &label,
+            &target.authority,
+            &scheme,
+            &active,
+        )));
     };
 
     let is_upgrade = req
@@ -168,19 +237,20 @@ async fn handle(
         .is_some_and(|v| v.to_lowercase().contains("upgrade"))
         && req.headers().contains_key(hyper::header::UPGRADE);
     if is_upgrade {
-        return Ok(stamp(websocket_tunnel(req, route.port, &host).await));
+        prepare_forward_headers(&mut req, &target, peer, route.port);
+        return Ok(stamp(
+            websocket_tunnel(req, route.port, &target.origin_form).await,
+        ));
     }
 
-    let path = req
-        .uri()
-        .path_and_query()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_else(|| "/".into());
-    let uri: hyper::Uri = format!("http://127.0.0.1:{}{}", route.port, path)
-        .parse()
+    let uri = Uri::builder()
+        .scheme("http")
+        .authority(format!("127.0.0.1:{}", route.port))
+        .path_and_query(target.origin_form.as_str())
+        .build()
         .expect("valid backend uri");
     *req.uri_mut() = uri;
-    set_forward_headers(req.headers_mut(), &host, peer, route.port);
+    prepare_forward_headers(&mut req, &target, peer, route.port);
 
     match client.request(req).await {
         Ok(resp) => Ok(stamp(resp.map(|b| b.boxed()))),
@@ -194,8 +264,14 @@ async fn handle(
     }
 }
 
-fn set_forward_headers(h: &mut hyper::HeaderMap, host: &str, peer: SocketAddr, port: u16) {
+fn prepare_forward_headers(
+    req: &mut Request<Incoming>,
+    target: &RequestTarget,
+    peer: SocketAddr,
+    backend_port: u16,
+) {
     use hyper::header::{HeaderValue, HOST};
+    let h = req.headers_mut();
     let hops = h
         .get("x-portproxy-hops")
         .and_then(|v| v.to_str().ok())
@@ -205,10 +281,16 @@ fn set_forward_headers(h: &mut hyper::HeaderMap, host: &str, peer: SocketAddr, p
         "x-portproxy-hops",
         HeaderValue::from_str(&(hops + 1).to_string()).unwrap(),
     );
-    // backend sees localhost so Vite-style host checks pass
+    h.remove("proxy-authorization");
+    h.remove("proxy-connection");
+
+    let backend_host = match target.mode {
+        RequestMode::Ordinary => format!("localhost:{backend_port}"),
+        RequestMode::Absolute => target.authority.clone(),
+    };
     h.insert(
         HOST,
-        HeaderValue::from_str(&format!("localhost:{port}")).unwrap(),
+        HeaderValue::from_str(&backend_host).expect("classified authority is a header value"),
     );
     // append, preserving values already set by Caddy/Nginx
     let xff = match h.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
@@ -222,13 +304,37 @@ fn set_forward_headers(h: &mut hyper::HeaderMap, host: &str, peer: SocketAddr, p
         h.insert("x-forwarded-proto", HeaderValue::from_static("http"));
     }
     if !h.contains_key("x-forwarded-host") {
-        if let Ok(v) = HeaderValue::from_str(host) {
+        if let Ok(v) = HeaderValue::from_str(&target.authority) {
             h.insert("x-forwarded-host", v);
         }
     }
+    if !h.contains_key("x-forwarded-port") {
+        let forwarded_proto = h
+            .get("x-forwarded-proto")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("http");
+        let port = authority_port(&target.authority).unwrap_or_else(|| {
+            if forwarded_proto.eq_ignore_ascii_case("https") {
+                "443"
+            } else {
+                "80"
+            }
+        });
+        h.insert(
+            "x-forwarded-port",
+            HeaderValue::from_str(port).expect("derived port is a header value"),
+        );
+    }
 }
 
-async fn websocket_tunnel(req: Request<Incoming>, port: u16, host: &str) -> Response<Body> {
+fn authority_port(authority: &str) -> Option<&str> {
+    authority.rsplit_once(':').and_then(|(host, port)| {
+        (!host.is_empty() && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+            .then_some(port)
+    })
+}
+
+async fn websocket_tunnel(req: Request<Incoming>, port: u16, origin_form: &str) -> Response<Body> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut backend = match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
         Ok(s) => s,
@@ -239,23 +345,13 @@ async fn websocket_tunnel(req: Request<Incoming>, port: u16, host: &str) -> Resp
     };
 
     // raw handshake to the backend
-    let path = req
-        .uri()
-        .path_and_query()
-        .map(|p| p.as_str())
-        .unwrap_or("/")
-        .to_string();
-    let mut raw = format!("{} {} HTTP/1.1\r\n", req.method(), path);
-    raw.push_str(&format!("Host: localhost:{port}\r\n"));
+    let mut raw = format!("{} {} HTTP/1.1\r\n", req.method(), origin_form);
     for (k, v) in req.headers() {
-        if k == hyper::header::HOST {
-            continue;
-        }
         if let Ok(v) = v.to_str() {
             raw.push_str(&format!("{k}: {v}\r\n"));
         }
     }
-    raw.push_str(&format!("X-Forwarded-Host: {host}\r\n\r\n"));
+    raw.push_str("\r\n");
     if backend.write_all(raw.as_bytes()).await.is_err() {
         return text(StatusCode::BAD_GATEWAY, "backend handshake write failed");
     }

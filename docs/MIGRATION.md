@@ -87,6 +87,44 @@ Example Caddy configuration:
 }
 ```
 
+This ordinary reverse-proxy form deliberately normalizes the backend `Host` to
+`localhost:<app-port>` so Vite-style host checks continue to work. The original
+authority is forwarded in `X-Forwarded-Host`.
+
+If a particular app must instead see its public authority as `Host`, make that
+authority the Caddy upstream and use portproxy as the HTTP transport's forward
+proxy:
+
+```caddyfile
+app.dev.example.test {
+    reverse_proxy http://app.dev.example.test {
+        transport http {
+            network_proxy url http://host.docker.internal:1355
+        }
+    }
+}
+```
+
+The second form makes Caddy send an absolute-form HTTP/1.1 target. portproxy uses
+the URI authority—not the received `Host` header—to select the same live route,
+then sends an origin-form target to the app and preserves that authority as the
+backend `Host`. Authority ports remain visible to the app but cannot select the
+backend connection. Unknown labels stay local and return portproxy's 404;
+`CONNECT`, HTTPS absolute targets, and unregistered destinations are not
+forwarded.
+
+The two modes require no route-file migration, flags, custom headers, or naming
+conventions and can be used concurrently. Forwarded metadata and WebSocket
+upgrades follow the same rules in both modes.
+
+For a single Caddy configuration that selects the mode by wildcard namespace,
+use `NAME.dev.example.com` for normalized Host and
+`NAME.origin.dev.example.com` for preserved Host. Keeping `NAME` as the first
+label lets both authorities resolve the same portproxy route. The full example,
+including automatic wildcard TLS, handler ordering, dynamic-upstream syntax,
+container networking, and validation commands, is in
+[Caddy Integration](CADDY.md).
+
 ### Name Inference
 
 Name inference matches Vercel portless file choices and order:
